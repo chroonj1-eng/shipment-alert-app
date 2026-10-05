@@ -1,0 +1,8 @@
+{
+  "name": "Remix Marine Spare Parts Tracker \u0026 SRM Alert System",
+  "description": "Enterprise marine vessel spare parts tracking, real-time job-based SRM monitoring, automated delivery alerts, and role-based access control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
