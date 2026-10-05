@@ -34,7 +34,6 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
-  switchDemoUser: (role: 'ADMIN' | 'SRM') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -418,12 +417,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Switch demo test user for fast testing (Admin vs SRM)
-  const switchDemoUser = async (role: 'ADMIN' | 'SRM') => {
-    const targetEmail = role === 'ADMIN' ? 'admin.somchai@unithai.com' : 'ing.srm@unithai.com';
-    await login(targetEmail, 'password123');
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -446,7 +439,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         resetPassword,
         refreshProfile,
-        switchDemoUser,
       }}
     >
       {children}

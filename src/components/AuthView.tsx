@@ -18,7 +18,6 @@ import {
   AlertCircle,
   KeyRound,
   Anchor,
-  Sparkles,
 } from 'lucide-react';
 import { RoleType } from '../types/database';
 
@@ -29,7 +28,6 @@ export const AuthView: React.FC = () => {
     login,
     register,
     resetPassword,
-    switchDemoUser,
     loading,
     error: authError,
     authMessage,
@@ -586,58 +584,6 @@ export const AuthView: React.FC = () => {
                   </button>
                 </p>
               )}
-            </div>
-
-            {/* One-Click Quick Test Accounts - High Contrast in both light and dark */}
-            <div
-              className={`mt-6 p-3.5 rounded-xl border border-dashed transition-colors ${
-                isDark
-                  ? 'border-slate-700 bg-slate-800/40 text-slate-200'
-                  : 'border-slate-300 bg-slate-50 text-slate-800'
-              }`}
-            >
-              <div
-                className={`flex items-center gap-1.5 font-bold text-xs mb-2.5 ${
-                  isDark ? 'text-slate-200' : 'text-slate-800'
-                }`}
-              >
-                <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
-                <span>{t.quickTestAccess}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => switchDemoUser('ADMIN')}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                    isDark
-                      ? 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-500/40 text-amber-300'
-                      : 'bg-amber-50/90 hover:bg-amber-100 border-amber-300 text-amber-950 shadow-xs'
-                  }`}
-                >
-                  <span className={`block font-bold text-xs ${isDark ? 'text-amber-300' : 'text-amber-900'}`}>
-                    Admin Somchai
-                  </span>
-                  <span className={`text-[10px] block mt-0.5 leading-tight ${isDark ? 'text-amber-200/70' : 'text-amber-700'}`}>
-                    {t.adminSomchaiDesc}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => switchDemoUser('SRM')}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                    isDark
-                      ? 'bg-cyan-950/40 hover:bg-cyan-900/50 border-cyan-500/40 text-cyan-300'
-                      : 'bg-cyan-50/90 hover:bg-cyan-100 border-cyan-300 text-cyan-950 shadow-xs'
-                  }`}
-                >
-                  <span className={`block font-bold text-xs ${isDark ? 'text-cyan-300' : 'text-cyan-900'}`}>
-                    SRM Ing (Preecha)
-                  </span>
-                  <span className={`text-[10px] block mt-0.5 leading-tight ${isDark ? 'text-cyan-200/70' : 'text-cyan-700'}`}>
-                    {t.srmIngDesc}
-                  </span>
-                </button>
-              </div>
             </div>
           </div>
         </div>

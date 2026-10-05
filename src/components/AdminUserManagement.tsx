@@ -66,18 +66,6 @@ export const AdminUserManagement: React.FC = () => {
     return jobs.filter((j) => userJobIds.includes(j.id));
   };
 
-  const handleSelectRole = async (userId: string, newRole: RoleType) => {
-    await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
-    await loadData();
-  };
-
-  const handleChangeRole = async (userId: string, currentRole: RoleType) => {
-    const roles: RoleType[] = ['ADMIN', 'SRM', 'CO_SRM', 'IN_CHARGE'];
-    const nextRole = roles[(roles.indexOf(currentRole) + 1) % roles.length];
-    await supabase.from('profiles').update({ role: nextRole }).eq('id', userId);
-    await loadData();
-  };
-
   const handleToggleStatus = async (userId: string, currentStatus: 'ACTIVE' | 'INACTIVE') => {
     const newStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     await supabase.from('profiles').update({ status: newStatus }).eq('id', userId);
@@ -226,12 +214,10 @@ export const AdminUserManagement: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Role Selector */}
+                      {/* Role Badge (Fixed from Supabase) */}
                       <td className="py-3 px-4">
-                        <select
-                          value={user.role}
-                          onChange={(e) => handleSelectRole(user.id, e.target.value as RoleType)}
-                          className={`text-[10px] font-mono font-bold uppercase rounded-lg px-2 py-1 border cursor-pointer focus:outline-hidden transition-all ${
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-mono font-bold uppercase rounded-lg px-2.5 py-1 border shadow-2xs ${
                             user.role === 'ADMIN'
                               ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
                               : user.role === 'CO_SRM'
@@ -245,13 +231,14 @@ export const AdminUserManagement: React.FC = () => {
                               : 'bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-500/20 dark:text-cyan-300 dark:border-cyan-500/30'
                           }`}
                         >
-                          <option value="ADMIN">👑 ADMIN</option>
-                          <option value="SRM">⚓ SRM</option>
-                          <option value="CO_SRM">🤝 CO SRM</option>
-                          <option value="IN_CHARGE">📋 IN CHARGE</option>
-                          <option value="ENGINEER">🔧 ENGINEER</option>
-                          <option value="USER">👤 USER</option>
-                        </select>
+                          {user.role === 'ADMIN' && '👑 ADMIN'}
+                          {user.role === 'SRM' && '⚓ SRM'}
+                          {user.role === 'CO_SRM' && '🤝 CO SRM'}
+                          {user.role === 'IN_CHARGE' && '📋 IN-CHARGE'}
+                          {user.role === 'ENGINEER' && '🔧 ENGINEER'}
+                          {user.role === 'USER' && '👤 USER'}
+                          {!['ADMIN', 'SRM', 'CO_SRM', 'IN_CHARGE', 'ENGINEER', 'USER'].includes(user.role) && user.role}
+                        </span>
                       </td>
 
                       {/* Status */}
@@ -350,16 +337,6 @@ export const AdminUserManagement: React.FC = () => {
                             ) : (
                               <UserCheck className="w-3.5 h-3.5" />
                             )}
-                          </button>
-
-                          {/* Change Role */}
-                          <button
-                            type="button"
-                            onClick={() => handleChangeRole(user.id, user.role)}
-                            className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-mono font-bold cursor-pointer"
-                            title={user.role === 'ADMIN' ? t.demoteToSrm : t.makeAdmin}
-                          >
-                            {user.role === 'ADMIN' ? t.demoteToSrm : t.makeAdmin}
                           </button>
                         </div>
                       </td>

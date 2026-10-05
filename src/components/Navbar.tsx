@@ -16,7 +16,6 @@ import {
   Shield,
   ShieldAlert,
   LayoutDashboard,
-  Sparkles,
 } from 'lucide-react';
 
 export type NavTab = 'dashboard' | 'parts' | 'users' | 'jobs' | 'shipments';
@@ -29,7 +28,7 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
-  const { currentUser, isAdmin, logout, switchDemoUser } = useAuth();
+  const { currentUser, isAdmin, logout } = useAuth();
 
   return (
     <header
@@ -144,25 +143,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
             <LanguageToggle />
             <SupabaseBadge />
             <ThemeToggle showLabel={false} />
-
-            {/* Quick Role Switcher for Tester Ease */}
-            <div className={`hidden lg:flex items-center gap-1 border-l pl-2 ml-1 ${
-              isDark ? 'border-slate-800' : 'border-slate-200'
-            }`}>
-              <button
-                type="button"
-                onClick={() => switchDemoUser(isAdmin ? 'SRM' : 'ADMIN')}
-                className={`px-2 py-1 rounded-lg text-[10px] font-mono border flex items-center gap-1 cursor-pointer transition-all ${
-                  isDark
-                    ? 'border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200'
-                    : 'border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-700'
-                }`}
-                title="Switch between Admin and SRM views instantly"
-              >
-                <Sparkles className="w-3 h-3 text-amber-500 dark:text-amber-400" />
-                <span>{t.switchRoleBtn} {isAdmin ? 'SRM' : 'ADMIN'}</span>
-              </button>
-            </div>
 
             {/* User Profile Badge */}
             {currentUser && (
