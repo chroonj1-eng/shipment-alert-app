@@ -31,6 +31,14 @@ export interface Job {
   vessel: string; // e.g. "GAS LOMBOK"
   customer: string;
   status: JobStatus;
+  eta?: string; // Estimated Time of Arrival (YYYY-MM-DD)
+  etd?: string; // Estimated Time of Departure (YYYY-MM-DD)
+  srm_id?: string;
+  srm_name?: string;
+  co_srm_id?: string;
+  co_srm_name?: string;
+  in_charge_id?: string;
+  in_charge_name?: string;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +68,7 @@ export interface Shipment {
   eta: string;
   status: ShipmentStatus;
   urgency?: UrgencyLevel;
+  urgency_level?: UrgencyLevel;
   received_date?: string | null;
   receiver_name?: string | null;
   receiver_notes?: string | null;

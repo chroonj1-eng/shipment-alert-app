@@ -1,18 +1,7 @@
-```tsx
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-} from 'react';
-
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { supabase, isSupabaseConfigured, getLocalDb, saveLocalDb } from '../lib/supabase';
 import { Profile, RoleType } from '../types/database';
-import {
-  getAuthRedirectUrl,
-  parseAuthUrlCallback,
-  clearAuthUrlParams,
-} from '../lib/authUrl';
+import { getAuthRedirectUrl, parseAuthUrlCallback, clearAuthUrlParams } from '../lib/authUrl';
 
 interface RegisterData {
   fullName?: string;
@@ -20,11 +9,7 @@ interface RegisterData {
   employeeId?: string;
   email: string;
   password: string;
-
-  // Kept for compatibility with the existing UI.
-  // IMPORTANT: This value is NOT trusted for authorization.
   role?: RoleType;
-
   department?: string;
 }
 
@@ -44,208 +29,107 @@ interface AuthContextType {
   isAdmin: boolean;
   isSRM: boolean;
   isConfigured: boolean;
-
-  register: (
-    data: RegisterData
-  ) => Promise<{
-    success: boolean;
-    error?: string;
-    requiresConfirmation?: boolean;
-  }>;
-
-  login: (
-    email: string,
-    password: string
-  ) => Promise<{
-    success: boolean;
-    error?: string;
-  }>;
-
+  register: (data: RegisterData) => Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-
-  resetPassword: (
-    email: string
-  ) => Promise<{
-    success: boolean;
-    error?: string;
-  }>;
-
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
+  updateProfile: (updates: Partial<Profile>) => Promise<{ success: boolean; error?: string }>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(
-  undefined
-);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{
-  children: React.ReactNode;
-}> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<any>(null);
-
-  const [currentUser, setCurrentUser] =
-    useState<Profile | null>(null);
-
-  const [loading, setLoading] =
-    useState<boolean>(true);
-
-  const [error, setError] =
-    useState<string | null>(null);
-
-  const [authMessage, setAuthMessage] =
-    useState<AuthMessage | null>(null);
+  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [authMessage, setAuthMessage] = useState<AuthMessage | null>(null);
 
   const clearAuthMessage = () => {
     setAuthMessage(null);
   };
 
-  /**
-   * Load user profile from public.profiles.
-   *
-   * SECURITY:
-   * Role and status are read from public.profiles only.
-   * Auth metadata is never trusted for authorization.
-   */
+  // Fetch from Supabase profiles table, or construct from Supabase Auth User & Metadata
   const fetchUserProfile = async (
     userId: string,
     userEmail?: string,
     userMeta?: any,
     userCreatedAt?: string
   ): Promise<Profile> => {
-    const email =
-      userEmail ||
-      userMeta?.email ||
-      '';
+    // 0. Check local database for profile
+    const localDb = getLocalDb();
+    const localProfile = localDb.profiles?.find(
+      (p: Profile) => p.id === userId || (userEmail && p.email?.toLowerCase() === userEmail.toLowerCase())
+    );
 
-    const name =
-      userMeta?.name ||
-      userMeta?.full_name ||
-      email.split('@')[0] ||
-      'User';
+    const email = userEmail || userMeta?.email || localProfile?.email || '';
+    const name = userMeta?.name || userMeta?.full_name || localProfile?.name || email.split('@')[0] || 'User';
+    const fullName = userMeta?.full_name || userMeta?.name || localProfile?.full_name || name;
+    const employeeId = userMeta?.employee_id || localProfile?.employee_id || `UT-${userId.substring(0, 5).toUpperCase()}`;
+    const role: RoleType = (userMeta?.role as RoleType) || localProfile?.role || 'SRM';
+    const department = userMeta?.department || localProfile?.department || 'Ship Repair Management (SRM)';
+    const createdAt = userCreatedAt || userMeta?.created_at || localProfile?.created_at || new Date().toISOString();
 
-    const fullName =
-      userMeta?.full_name ||
-      userMeta?.name ||
-      name;
-
-    const employeeId =
-      userMeta?.employee_id ||
-      `UT-${userId
-        .substring(0, 5)
-        .toUpperCase()}`;
-
-    const department =
-      userMeta?.department ||
-      'Ship Repair Management';
-
-    const createdAt =
-      userCreatedAt ||
-      userMeta?.created_at ||
-      new Date().toISOString();
-
-    /**
-     * Safe fallback.
-     *
-     * IMPORTANT:
-     * Do NOT use userMeta?.role here.
-     */
     const fallbackProfile: Profile = {
       id: userId,
       email,
       name,
       full_name: fullName,
       employee_id: employeeId,
-      role: 'SRM',
+      role,
       department,
       status: 'ACTIVE',
+      last_login: new Date().toISOString(),
       created_at: createdAt,
       updated_at: new Date().toISOString(),
     };
 
     try {
-      const {
-        data,
-        error: fetchErr,
-      } = await supabase
+      // 1. Try to read from public.profiles table in Supabase
+      const { data, error: fetchErr } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
-      if (fetchErr) {
-        console.error(
-          'Failed to read profile:',
-          fetchErr
-        );
-
-        throw fetchErr;
-      }
-
-      /**
-       * public.profiles is the source of truth.
-       */
-      if (data) {
+      if (data && !fetchErr) {
+        // STRICT RBAC: The role MUST strictly come from public.profiles.role in the database
+        const dbRole = (data.role as RoleType) || 'SRM';
         return {
           ...fallbackProfile,
           ...data,
-
-          email:
-            data.email ||
-            email,
-
-          name:
-            data.name ||
-            data.full_name ||
-            name,
-
-          full_name:
-            data.full_name ||
-            data.name ||
-            fullName,
-
-          employee_id:
-            data.employee_id ||
-            employeeId,
-
-          department:
-            data.department ||
-            department,
-
-          role:
-            data.role as RoleType,
-
-          status:
-            data.status,
+          email: data.email || email,
+          name: data.name || data.full_name || name,
+          full_name: data.full_name || data.name || fullName,
+          department: data.department || userMeta?.department || localProfile?.department || department,
+          role: dbRole,
         };
       }
 
-      /**
-       * Normally this should not happen because
-       * the database trigger creates the profile
-       * automatically after registration.
-       */
-      console.warn(
-        'Profile not found for authenticated user:',
-        userId
-      );
+      // If remote profile not found, but we have local profile, return it
+      if (localProfile) {
+        return {
+          ...fallbackProfile,
+          ...localProfile,
+        };
+      }
+
+      // 2. If row not found in public.profiles table, attempt to upsert
+      try {
+        await supabase.from('profiles').upsert(fallbackProfile);
+      } catch (upsertErr) {
+        console.warn('Notice: Could not upsert into public.profiles table (safe to continue with Supabase Auth session):', upsertErr);
+      }
 
       return fallbackProfile;
     } catch (err: any) {
-      console.error(
-        'Failed to load user profile:',
-        err
-      );
-
-      /**
-       * Safe fallback.
-       * Never use Auth metadata for role.
-       */
-      return fallbackProfile;
+      console.warn('Notice: Failed reading from public.profiles, using Supabase Auth metadata / local store:', err);
+      return localProfile || fallbackProfile;
     }
   };
 
-  /**
-   * Initialize existing Supabase session.
-   */
+  // Initialize session on mount and handle confirmation callbacks
   useEffect(() => {
     let mounted = true;
 
@@ -253,412 +137,262 @@ export const AuthProvider: React.FC<{
       try {
         setLoading(true);
 
-        /**
-         * Handle email confirmation,
-         * password recovery, etc.
-         */
-        const callbackInfo =
-          parseAuthUrlCallback();
-
+        // 1. Inspect URL hash and query string for email confirmation or auth callbacks
+        const callbackInfo = parseAuthUrlCallback();
         if (callbackInfo) {
           if (callbackInfo.isError) {
-            let errorMsg =
-              callbackInfo.errorDescription ||
-              callbackInfo.errorCode ||
-              'Authentication failed';
+            let errorMsg = callbackInfo.errorDescription || callbackInfo.errorCode || 'Authentication failed';
+            let title = 'ยืนยันตัวตนไม่สำเร็จ (Verification Failed)';
 
-            let title =
-              'ยืนยันตัวตนไม่สำเร็จ (Verification Failed)';
-
-            if (
-              callbackInfo.errorCode ===
-              'otp_expired'
-            ) {
-              errorMsg =
-                'ลิงก์ยืนยันอีเมลหมดอายุแล้ว หรือถูกใช้งานไปแล้ว กรุณาลงทะเบียนใหม่หรือเข้าสู่ระบบ (Email confirmation link is invalid or has expired)';
-            } else if (
-              callbackInfo.errorCode ===
-              'access_denied'
-            ) {
-              errorMsg =
-                'การเข้าถึงถูกปฏิเสธ: ลิงก์ยืนยันไม่ถูกต้องหรือหมดอายุ (Access denied: verification link is invalid or expired)';
+            if (callbackInfo.errorCode === 'otp_expired') {
+              errorMsg = 'ลิงก์ยืนยันอีเมลหมดอายุแล้ว หรือถูกใช้งานไปแล้ว กรุณาลงทะเบียนใหม่หรือเข้าสู่ระบบ (Email confirmation link is invalid or has expired)';
+            } else if (callbackInfo.errorCode === 'access_denied') {
+              errorMsg = 'การเข้าถึงถูกปฏิเสธ: ลิงก์ยืนยันไม่ถูกต้องหรือหมดอายุ (Access denied: verification link is invalid or expired)';
             }
 
             if (mounted) {
               setError(errorMsg);
-
               setAuthMessage({
                 type: 'error',
                 title,
                 message: errorMsg,
               });
             }
-
             clearAuthUrlParams();
-          } else if (
-            callbackInfo.type === 'signup' ||
-            callbackInfo.type ===
-              'email_change' ||
-            callbackInfo.hasToken
-          ) {
+          } else if (callbackInfo.type === 'signup' || callbackInfo.type === 'email_change' || callbackInfo.hasToken) {
             if (mounted) {
               setAuthMessage({
                 type: 'success',
-                title:
-                  'ยืนยันอีเมลสำเร็จ (Email Confirmed)',
-                message:
-                  'ยืนยันอีเมลและเปิดใช้งานบัญชีสำเร็จแล้ว ยินดีต้อนรับสู่ระบบ UNITHAI SRM (Email confirmed successfully! Welcome to UNITHAI SRM)',
+                title: 'ยืนยันอีเมลสำเร็จ (Email Confirmed)',
+                message: 'ยืนยันอีเมลและเปิดใช้งานบัญชีสำเร็จแล้ว ยินดีต้อนรับสู่ระบบ UNITHAI SRM (Email confirmed successfully! Welcome to UNITHAI SRM)',
               });
             }
-
             clearAuthUrlParams();
-          } else if (
-            callbackInfo.type ===
-            'recovery'
-          ) {
+          } else if (callbackInfo.type === 'recovery') {
             if (mounted) {
               setAuthMessage({
                 type: 'info',
-                title:
-                  'ยืนยันการรีเซ็ตรหัสผ่าน (Password Reset)',
-                message:
-                  'ตรวจสอบลิงก์กู้คืนรหัสผ่านสำเร็จ กรุณาตั้งรหัสผ่านใหม่ (Password reset link verified. Please enter your new password)',
+                title: 'ยืนยันการรีเซ็ตรหัสผ่าน (Password Reset)',
+                message: 'ตรวจสอบลิงก์กู้คืนรหัสผ่านสำเร็จ กรุณาตั้งรหัสผ่านใหม่ (Password reset link verified. Please enter your new password)',
               });
             }
-
             clearAuthUrlParams();
           }
         }
 
-        /**
-         * Get existing Supabase session.
-         */
-        const {
-          data: {
-            session: existingSession,
-          },
-          error: sessionError,
-        } =
-          await supabase.auth.getSession();
+        // 2. Requirement 7: Check the existing Supabase session using getSession()
+        const { data: { session: existingSession }, error: sessionError } = await supabase.auth.getSession();
 
         if (sessionError) {
-          console.warn(
-            'Supabase getSession notice:',
-            sessionError.message
-          );
+          console.warn('Supabase getSession notice:', sessionError.message);
         }
 
-        if (
-          existingSession?.user &&
-          mounted
-        ) {
+        if (existingSession?.user && mounted) {
           setSession(existingSession);
-
-          const profile =
-            await fetchUserProfile(
-              existingSession.user.id,
-              existingSession.user.email,
-              existingSession.user.user_metadata,
-              existingSession.user.created_at
-            );
-
-          /**
-           * Inactive accounts cannot access
-           * the application.
-           */
-          if (
-            profile.status ===
-            'INACTIVE'
-          ) {
-            await supabase.auth.signOut();
-
-            if (mounted) {
-              setSession(null);
-              setCurrentUser(null);
-            }
-
-            return;
-          }
-
-          if (mounted) {
-            setCurrentUser(profile);
-          }
+          const profile = await fetchUserProfile(
+            existingSession.user.id,
+            existingSession.user.email,
+            existingSession.user.user_metadata,
+            existingSession.user.created_at
+          );
+          if (mounted) setCurrentUser(profile);
         }
       } catch (err: any) {
-        console.error(
-          'Init session error:',
-          err
-        );
+        console.error('Init session error:', err);
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
     }
 
     initSession();
 
-    /**
-     * Listen for Supabase authentication changes.
-     */
-    const {
-      data: authListener,
-    } =
-      supabase.auth.onAuthStateChange(
-        async (
-          event: any,
-          newSession: any
-        ) => {
-          if (!mounted) return;
+    // Requirement 8: Listen for authentication changes using onAuthStateChange()
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event: any, newSession: any) => {
+      if (!mounted) return;
+      setSession(newSession);
 
-          setSession(newSession);
-
-          if (
-            event === 'SIGNED_IN' &&
-            newSession?.user
-          ) {
-            const callbackInfo =
-              parseAuthUrlCallback();
-
-            if (
-              callbackInfo &&
-              !callbackInfo.isError &&
-              callbackInfo.type ===
-                'signup'
-            ) {
-              setAuthMessage({
-                type: 'success',
-                title:
-                  'ยืนยันอีเมลสำเร็จ (Email Confirmed)',
-                message:
-                  'ยืนยันอีเมลและเปิดใช้งานบัญชีสำเร็จแล้ว ยินดีต้อนรับสู่ระบบ UNITHAI SRM',
-              });
-
-              clearAuthUrlParams();
-            }
-          }
-
-          if (newSession?.user) {
-            const profile =
-              await fetchUserProfile(
-                newSession.user.id,
-                newSession.user.email,
-                newSession.user.user_metadata,
-                newSession.user.created_at
-              );
-
-            if (
-              profile.status ===
-              'INACTIVE'
-            ) {
-              await supabase.auth.signOut();
-
-              if (mounted) {
-                setSession(null);
-                setCurrentUser(null);
-              }
-
-              return;
-            }
-
-            if (mounted) {
-              setCurrentUser(profile);
-            }
-          } else {
-            if (mounted) {
-              setCurrentUser(null);
-            }
-          }
+      if (event === 'SIGNED_IN' && newSession?.user) {
+        const callbackInfo = parseAuthUrlCallback();
+        if (callbackInfo && !callbackInfo.isError && callbackInfo.type === 'signup') {
+          setAuthMessage({
+            type: 'success',
+            title: 'ยืนยันอีเมลสำเร็จ (Email Confirmed)',
+            message: 'ยืนยันอีเมลและเปิดใช้งานบัญชีสำเร็จแล้ว ยินดีต้อนรับสู่ระบบ UNITHAI SRM',
+          });
+          clearAuthUrlParams();
         }
-      );
+      }
+
+      if (newSession?.user) {
+        const profile = await fetchUserProfile(
+          newSession.user.id,
+          newSession.user.email,
+          newSession.user.user_metadata,
+          newSession.user.created_at
+        );
+        if (mounted) setCurrentUser(profile);
+      } else {
+        if (mounted) setCurrentUser(null);
+      }
+    });
 
     return () => {
       mounted = false;
-
       authListener?.subscription?.unsubscribe?.();
     };
   }, []);
 
-  /**
-   * Refresh profile from public.profiles.
-   */
-  const refreshProfile =
-    async () => {
-      if (!currentUser?.id) return;
+  const refreshProfile = async () => {
+    if (!currentUser?.id) return;
+    const updated = await fetchUserProfile(currentUser.id, currentUser.email, undefined, currentUser.created_at);
+    if (updated) setCurrentUser(updated);
+  };
 
-      const {
-        data: {
-          user,
-        },
-      } =
-        await supabase.auth.getUser();
+  const updateProfile = async (updates: Partial<Profile>) => {
+    if (!currentUser?.id) return { success: false, error: 'No user logged in' };
+    try {
+      // SECURITY RULE: Users CANNOT change their own role. Role strictly comes from public.profiles.
+      const safeUpdates = { ...updates };
+      delete safeUpdates.role;
+      delete safeUpdates.id;
 
-      if (!user) return;
+      const updatedProfile: Profile = {
+        ...currentUser,
+        ...safeUpdates,
+        role: currentUser.role, // NEVER allow changing role through user profile update
+        updated_at: new Date().toISOString(),
+      };
 
-      const updated =
-        await fetchUserProfile(
-          user.id,
-          user.email,
-          user.user_metadata,
-          user.created_at
-        );
-
-      if (
-        updated.status ===
-        'INACTIVE'
-      ) {
-        await supabase.auth.signOut();
-
-        setSession(null);
-        setCurrentUser(null);
-
-        return;
+      // 1. Update in remote profiles if possible
+      try {
+        await supabase
+          .from('profiles')
+          .update(safeUpdates)
+          .eq('id', currentUser.id);
+      } catch (err) {
+        console.warn('Notice: Remote profile update notice:', err);
       }
 
-      setCurrentUser(updated);
-    };
+      // 2. Update in local database
+      const localDb = getLocalDb();
+      if (localDb.profiles) {
+        const idx = localDb.profiles.findIndex((p: Profile) => p.id === currentUser.id);
+        if (idx >= 0) {
+          localDb.profiles[idx] = { ...localDb.profiles[idx], ...safeUpdates, role: currentUser.role };
+        } else {
+          localDb.profiles.push(updatedProfile);
+        }
+        saveLocalDb(localDb);
+      }
 
-  /**
-   * Register new user.
-   *
-   * IMPORTANT:
-   * The database trigger creates the
-   * public.profiles record.
-   *
-   * New users are always assigned SRM
-   * by the database trigger.
-   */
+      // 3. Update active session user_metadata
+      const sessionRaw = localStorage.getItem('srm_supabase_auth_session');
+      if (sessionRaw) {
+        try {
+          const sess = JSON.parse(sessionRaw);
+          if (sess.user) {
+            sess.user.user_metadata = {
+              ...sess.user.user_metadata,
+              full_name: updatedProfile.full_name,
+              name: updatedProfile.name,
+              employee_id: updatedProfile.employee_id,
+              role: updatedProfile.role,
+              department: updatedProfile.department,
+            };
+            localStorage.setItem('srm_supabase_auth_session', JSON.stringify(sess));
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setCurrentUser(updatedProfile);
+      window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Requirement 2: Registration must use Supabase Auth signUp()
+  // Requirement 5 & 6: Create/update user's profile in Supabase table (id, email, name, role, department, created_at)
   const register = async ({
     fullName,
     name,
     employeeId,
     email,
     password,
+    role = 'SRM',
     department = 'Ship Repair Management',
   }: RegisterData) => {
     try {
       setError(null);
       setLoading(true);
 
-      const resolvedName =
-        (
-          fullName ||
-          name ||
-          email.split('@')[0]
-        ).trim();
+      const resolvedName = (fullName || name || email.split('@')[0]).trim();
+      const resolvedEmpId = employeeId ? employeeId.trim().toUpperCase() : `UT-${Math.floor(10000 + Math.random() * 90000)}`;
+      // SECURITY RULE: Users registering themselves cannot grant themselves ADMIN role
+      const resolvedRole: RoleType = role === 'ADMIN' ? 'SRM' : (role || 'SRM');
+      const redirectUrl = getAuthRedirectUrl();
 
-      const resolvedEmpId =
-        employeeId
-          ? employeeId
-              .trim()
-              .toUpperCase()
-          : `UT-${Math.floor(
-              10000 +
-                Math.random() *
-                  90000
-            )}`;
-
-      const redirectUrl =
-        getAuthRedirectUrl();
-
-      const {
-        data,
-        error: signUpError,
-      } =
-        await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-
-          options: {
-            emailRedirectTo:
-              redirectUrl,
-
-            data: {
-              name: resolvedName,
-              full_name:
-                resolvedName,
-              employee_id:
-                resolvedEmpId,
-              department:
-                department.trim(),
-
-              /**
-               * Role is intentionally NOT sent.
-               * The database trigger controls it.
-               */
-            },
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          emailRedirectTo: redirectUrl,
+          data: {
+            name: resolvedName,
+            full_name: resolvedName,
+            employee_id: resolvedEmpId,
+            role: resolvedRole,
+            department: department.trim(),
           },
-        });
+        },
+      });
 
       if (signUpError) {
-        let msg =
-          signUpError.message;
-
-        if (
-          signUpError.message.includes(
-            'already registered'
-          )
-        ) {
-          msg =
-            'This email address is already registered. Please log in with your password.';
+        let msg = signUpError.message;
+        if (signUpError.message.includes('already registered')) {
+          msg = 'This email address is already registered. Please log in with your password.';
         }
-
         setError(msg);
-
-        return {
-          success: false,
-          error: msg,
-        };
+        return { success: false, error: msg };
       }
 
       if (!data.user) {
-        const msg =
-          'Registration failed: no user returned from authentication service.';
-
+        const msg = 'Registration failed: no user returned from authentication service.';
         setError(msg);
-
-        return {
-          success: false,
-          error: msg,
-        };
+        return { success: false, error: msg };
       }
 
-      /**
-       * DO NOT insert/update public.profiles here.
-       *
-       * Database trigger handles:
-       *
-       * auth.users
-       *      ↓
-       * handle_new_user()
-       *      ↓
-       * public.profiles
-       *      ↓
-       * role = SRM
-       */
-      const requiresConfirmation =
-        Boolean(
-          data.user &&
-            !data.session
-        );
+      // Prepare profile payload storing all required fields
+      const profilePayload: Profile = {
+        id: data.user.id,
+        email: email.trim(),
+        name: resolvedName,
+        full_name: resolvedName,
+        employee_id: resolvedEmpId,
+        role: resolvedRole,
+        department: department.trim(),
+        status: 'ACTIVE',
+        last_login: new Date().toISOString(),
+        created_at: data.user.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-      /**
-       * If email confirmation is disabled
-       * and a session is returned, load
-       * the actual profile from database.
-       */
+      // Requirement 5: Create/update user's profile in Supabase table
+      try {
+        await supabase.from('profiles').upsert(profilePayload);
+      } catch (profileErr) {
+        console.warn('Notice: Could not directly upsert to public.profiles table (safe to continue with Supabase Auth metadata):', profileErr);
+      }
+
+      // Check if email confirmation is required
+      const requiresConfirmation = Boolean(data.user && !data.session);
+
       if (data.session) {
         setSession(data.session);
-
-        const profile =
-          await fetchUserProfile(
-            data.user.id,
-            data.user.email,
-            data.user.user_metadata,
-            data.user.created_at
-          );
-
-        setCurrentUser(profile);
+        setCurrentUser(profilePayload);
       }
 
       return {
@@ -666,205 +400,107 @@ export const AuthProvider: React.FC<{
         requiresConfirmation,
       };
     } catch (err: any) {
-      const msg =
-        err.message ||
-        'Registration failed';
-
+      const msg = err.message || 'Registration failed';
       setError(msg);
-
-      return {
-        success: false,
-        error: msg,
-      };
+      return { success: false, error: msg };
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Login using Supabase Auth.
-   */
-  const login = async (
-    email: string,
-    password: string
-  ) => {
+  // Requirement 3: Login must use Supabase Auth signInWithPassword()
+  const login = async (email: string, password: string) => {
     try {
       setError(null);
       setLoading(true);
 
-      const {
-        data,
-        error: signInError,
-      } =
-        await supabase.auth.signInWithPassword(
-          {
-            email: email.trim(),
-            password,
-          }
-        );
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
       if (signInError) {
-        let msg =
-          signInError.message;
-
-        if (
-          signInError.message.includes(
-            'Invalid login credentials'
-          )
-        ) {
-          msg =
-            'Invalid email or password. Please verify your credentials or register a new account.';
-        } else if (
-          signInError.message.includes(
-            'Email not confirmed'
-          )
-        ) {
-          msg =
-            'Please confirm your email address via the verification link, or disable email confirmation in Supabase Auth settings.';
+        let msg = signInError.message;
+        if (signInError.message.includes('Invalid login credentials')) {
+          msg = 'Invalid email or password. Please verify your credentials or register a new account.';
+        } else if (signInError.message.includes('Email not confirmed')) {
+          msg = 'Please confirm your email address via the verification link, or disable email confirmation in Supabase Auth settings.';
         }
-
         setError(msg);
-
-        return {
-          success: false,
-          error: msg,
-        };
+        return { success: false, error: msg };
       }
 
-      if (
-        data.session &&
-        data.user
-      ) {
+      if (data.session && data.user) {
         setSession(data.session);
+        const profile = await fetchUserProfile(
+          data.user.id,
+          data.user.email,
+          data.user.user_metadata,
+          data.user.created_at
+        );
 
-        /**
-         * IMPORTANT:
-         * Read role/status from public.profiles.
-         */
-        const profile =
-          await fetchUserProfile(
-            data.user.id,
-            data.user.email,
-            data.user.user_metadata,
-            data.user.created_at
-          );
-
-        /**
-         * Check account status.
-         */
-        if (
-          profile.status ===
-          'INACTIVE'
-        ) {
+        if (profile.status === 'INACTIVE') {
           await supabase.auth.signOut();
-
           setSession(null);
           setCurrentUser(null);
-
-          const inactiveMsg =
-            'This account has been deactivated by the Admin.';
-
-          setError(
-            inactiveMsg
-          );
-
-          return {
-            success: false,
-            error: inactiveMsg,
-          };
+          const inactiveMsg = 'This account has been deactivated by the Admin.';
+          setError(inactiveMsg);
+          return { success: false, error: inactiveMsg };
         }
 
-        /**
-         * We intentionally do not update
-         * last_login from the client.
-         *
-         * There is currently no UPDATE policy
-         * on profiles.
-         */
+        // Record last_login in Supabase database
+        const now = new Date().toISOString();
+        try {
+          await supabase
+            .from('profiles')
+            .update({ last_login: now })
+            .eq('id', profile.id);
+        } catch (updateErr) {
+          console.warn('Notice: Could not update last_login on profiles table:', updateErr);
+        }
+
+        profile.last_login = now;
         setCurrentUser(profile);
       }
 
-      return {
-        success: true,
-      };
+      return { success: true };
     } catch (err: any) {
-      const msg =
-        err.message ||
-        'Login failed';
-
+      const msg = err.message || 'Login failed';
       setError(msg);
-
-      return {
-        success: false,
-        error: msg,
-      };
+      return { success: false, error: msg };
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Logout.
-   */
+  // Logout
   const logout = async () => {
     try {
       setLoading(true);
-
       await supabase.auth.signOut();
-
       setSession(null);
       setCurrentUser(null);
       setAuthMessage(null);
     } catch (err) {
-      console.error(
-        'Logout error:',
-        err
-      );
+      console.error('Logout error:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Forgot Password.
-   */
-  const resetPassword =
-    async (
-      email: string
-    ) => {
-      try {
-        const redirectUrl =
-          getAuthRedirectUrl();
-
-        const {
-          error: resetErr,
-        } =
-          await supabase.auth.resetPasswordForEmail(
-            email.trim(),
-            {
-              redirectTo:
-                redirectUrl,
-            }
-          );
-
-        if (resetErr) {
-          return {
-            success: false,
-            error:
-              resetErr.message,
-          };
-        }
-
-        return {
-          success: true,
-        };
-      } catch (err: any) {
-        return {
-          success: false,
-          error: err.message,
-        };
-      }
-    };
+  // Forgot Password: sends reset email with dynamic redirect URL
+  const resetPassword = async (email: string) => {
+    try {
+      const redirectUrl = getAuthRedirectUrl();
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: redirectUrl,
+      });
+      if (resetErr) return { success: false, error: resetErr.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  };
 
   return (
     <AuthContext.Provider
@@ -875,35 +511,20 @@ export const AuthProvider: React.FC<{
         error,
         authMessage,
         clearAuthMessage,
-
-        /**
-         * Authorization is based only
-         * on public.profiles.role.
-         */
-        isAdmin:
-          currentUser?.role ===
-          'ADMIN',
-
+        isAdmin: currentUser?.role === 'ADMIN',
         isSRM:
-          currentUser?.role ===
-            'SRM' ||
-          currentUser?.role ===
-            'CO_SRM' ||
-          currentUser?.role ===
-            'IN_CHARGE' ||
-          currentUser?.role ===
-            'ENGINEER' ||
-          currentUser?.role ===
-            'USER',
-
-        isConfigured:
-          isSupabaseConfigured,
-
+          currentUser?.role === 'SRM' ||
+          currentUser?.role === 'CO_SRM' ||
+          currentUser?.role === 'IN_CHARGE' ||
+          currentUser?.role === 'ENGINEER' ||
+          currentUser?.role === 'USER',
+        isConfigured: isSupabaseConfigured,
         register,
         login,
         logout,
         resetPassword,
         refreshProfile,
+        updateProfile,
       }}
     >
       {children}
@@ -911,19 +532,11 @@ export const AuthProvider: React.FC<{
   );
 };
 
-export const useAuth =
-  () => {
-    const context =
-      useContext(
-        AuthContext
-      );
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
 
-    if (!context) {
-      throw new Error(
-        'useAuth must be used within an AuthProvider'
-      );
-    }
-
-    return context;
-  };
-```

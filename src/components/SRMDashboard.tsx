@@ -5,6 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ShipmentDetailModal } from './ShipmentDetailModal';
+import { markShipmentReceived, updateShipmentUrgency } from '../services/rbacService';
 import {
   Ship,
   Package,
@@ -145,62 +146,36 @@ export const SRMDashboard: React.FC = () => {
     };
   }, [currentUser, scopeFilter]);
 
-  // Quick action: Confirm Receipt right from the table row
+  // Quick action: Confirm Receipt right from the table row (SRM permitted)
   const handleInlineConfirmReceived = async (shipment: Shipment, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const now = new Date().toISOString();
-      const receiverName = currentUser?.full_name || 'SRM Officer';
-      const relatedJob = myJobs.find((j) => j.id === shipment.job_id);
-
-      await supabase.from('shipments').update({
-        status: 'RECEIVED',
-        received_date: now,
-        receiver_name: receiverName,
-        receiver_notes: language === 'th' ? 'ตรวจรับอะไหล่เข้าอู่เรือแล้ว' : 'Received into shipyard',
-      }).eq('id', shipment.id);
-
-      // Trigger notification
-      await supabase.from('notifications').insert({
-        user_id: currentUser?.id,
-        type: 'SHIPMENT_RECEIVED',
-        title: language === 'th' ? `ตรวจรับอะไหล่สำเร็จ: ${shipment.awb_bl}` : `Spare Part Received: ${shipment.awb_bl}`,
-        message: language === 'th'
-          ? `คุณ ${receiverName} บันทึกตรวจรับอะไหล่สำหรับ ${relatedJob?.vessel || 'Vessel'} เรียบร้อยแล้ว`
-          : `${receiverName} confirmed receipt for ${relatedJob?.vessel || 'Vessel'}.`,
-        is_read: false,
-      });
-
-      setQuickSuccessMsg(language === 'th' ? `✅ ตรวจรับ ${shipment.awb_bl} เรียบร้อยแล้ว` : `✅ Confirmed ${shipment.awb_bl}`);
-      setTimeout(() => setQuickSuccessMsg(null), 3500);
-
-      await loadSrmData();
+      const res = await markShipmentReceived(shipment.id, currentUser);
+      if (res.success) {
+        setQuickSuccessMsg(language === 'th' ? `✅ ตรวจรับ ${shipment.awb_bl} เรียบร้อยแล้ว` : `✅ Confirmed ${shipment.awb_bl}`);
+        setTimeout(() => setQuickSuccessMsg(null), 3500);
+        await loadSrmData();
+      } else {
+        console.error('Confirm receipt error:', res.error);
+      }
     } catch (err) {
       console.error('Error quick confirming receipt:', err);
     }
   };
 
-  // Quick inline status change selector
-  const handleInlineStatusChange = async (shipmentId: string, newStatus: any, e: React.ChangeEvent<HTMLSelectElement>) => {
+  // Quick inline urgency change selector (SRM permitted: CRITICAL / URGENT / NORMAL)
+  const handleInlineUrgencyChange = async (shipmentId: string, newUrgency: 'CRITICAL' | 'URGENT' | 'NORMAL', e: React.ChangeEvent<HTMLSelectElement>) => {
     e.stopPropagation();
     try {
-      const isReceived = newStatus === 'RECEIVED';
-      const now = new Date().toISOString();
-      const receiverName = currentUser?.full_name || 'SRM Officer';
-
-      await supabase.from('shipments').update({
-        status: newStatus,
-        received_date: isReceived ? now : null,
-        receiver_name: isReceived ? receiverName : null,
-        receiver_notes: isReceived ? (language === 'th' ? 'ตรวจรับเข้าอู่เรือแล้ว' : 'Received into shipyard') : null,
-      }).eq('id', shipmentId);
-
-      setQuickSuccessMsg(language === 'th' ? `อัปเดตสถานะเป็น ${newStatus} แล้ว` : `Status updated to ${newStatus}`);
-      setTimeout(() => setQuickSuccessMsg(null), 3000);
-
-      await loadSrmData();
+      if (!['CRITICAL', 'URGENT', 'NORMAL'].includes(newUrgency)) return;
+      const res = await updateShipmentUrgency(shipmentId, newUrgency, currentUser);
+      if (res.success) {
+        setQuickSuccessMsg(language === 'th' ? `⚡ อัปเดตความด่วนเป็น ${newUrgency} แล้ว` : `⚡ Urgency updated to ${newUrgency}`);
+        setTimeout(() => setQuickSuccessMsg(null), 3000);
+        await loadSrmData();
+      }
     } catch (err) {
-      console.error('Error updating status inline:', err);
+      console.error('Error updating urgency inline:', err);
     }
   };
 
@@ -327,7 +302,7 @@ export const SRMDashboard: React.FC = () => {
                       : 'text-slate-700 dark:text-slate-300 hover:text-cyan-600'
                   }`}
                 >
-                  {language === 'th' ? 'พัสดุทั้งหมดในอู่' : 'All Shipyard Cargo'}
+                  {language === 'th' ? 'Shipment ทั้งหมดในอู่' : 'All Shipyard Shipments'}
                 </button>
                 <button
                   type="button"
@@ -728,7 +703,12 @@ export const SRMDashboard: React.FC = () => {
                 {/* 6. FLIGHT / VESSEL */}
                 <th className="py-3 px-3 font-black">{t.thFlightVessel}</th>
 
-                {/* 7. STATUS */}
+                {/* 7. URGENCY LEVEL - SRM Permitted Mutation */}
+                <th className="py-3 px-3 font-black whitespace-nowrap">
+                  {language === 'th' ? 'ระดับความด่วน' : 'Urgency'}
+                </th>
+
+                {/* 8. STATUS */}
                 <th
                   onClick={() => handleSort('status')}
                   className="py-3 px-3 font-black cursor-pointer hover:text-cyan-700 dark:hover:text-cyan-400 select-none"
@@ -739,7 +719,7 @@ export const SRMDashboard: React.FC = () => {
                   </div>
                 </th>
 
-                {/* 8. ACTIONS: แจ้งเตือน SRM / ดูรายละเอียด / เปลี่ยนสเตตัส */}
+                {/* 9. ACTIONS: ตรวจรับอะไหล่ / ดูรายละเอียด */}
                 <th className="py-3 px-3.5 font-black text-right">
                   {t.thActions}
                 </th>
@@ -749,14 +729,14 @@ export const SRMDashboard: React.FC = () => {
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-700 dark:text-slate-300">
+                  <td colSpan={9} className="py-12 text-center text-slate-700 dark:text-slate-300">
                     <div className="inline-block w-6 h-6 border-2 border-cyan-600 border-t-transparent rounded-full animate-spin mb-2"></div>
                     <p className="font-semibold text-xs">{t.loading}</p>
                   </td>
                 </tr>
               ) : filteredShipments.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-700 dark:text-slate-300">
+                  <td colSpan={9} className="py-12 text-center text-slate-700 dark:text-slate-300">
                     <p className="font-bold text-sm">
                       {language === 'th' ? 'ไม่พบรายการพัสดุที่ตรงกับเงื่อนไข' : 'No shipments found matching your filters.'}
                     </p>
@@ -845,50 +825,52 @@ export const SRMDashboard: React.FC = () => {
                         {s.flight_vessel || 'MV WAN HAI 312'}
                       </td>
 
-                      {/* 7. STATUS - Clear Pill Badge + Quick Selector */}
-                      <td className="py-3.5 px-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-black uppercase shadow-2xs ${
-                              s.status === 'ARRIVING_TODAY'
-                                ? 'bg-cyan-100 text-cyan-950 border border-cyan-400 dark:bg-cyan-950/80 dark:text-cyan-200 dark:border-cyan-700'
-                                : s.status === 'DELAYED'
-                                ? 'bg-red-100 text-red-950 border border-red-400 dark:bg-red-950/80 dark:text-red-200 dark:border-red-700'
-                                : s.status === 'RECEIVED'
-                                ? 'bg-emerald-100 text-emerald-950 border border-emerald-400 dark:bg-emerald-950/80 dark:text-emerald-200 dark:border-emerald-700'
-                                : 'bg-blue-100 text-blue-950 border border-blue-400 dark:bg-blue-950/80 dark:text-blue-200 dark:border-blue-700'
-                            }`}
-                          >
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                s.status === 'RECEIVED'
-                                  ? 'bg-emerald-600 dark:bg-emerald-400'
-                                  : s.status === 'DELAYED'
-                                  ? 'bg-red-600 dark:bg-red-400'
-                                  : 'bg-cyan-600 dark:bg-cyan-400 animate-pulse'
-                              }`}
-                            ></span>
-                            {s.status.replace('_', ' ')}
-                          </span>
+                      {/* 7. URGENCY - SRM Permitted Mutation */}
+                      <td className="py-3.5 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={s.urgency || s.urgency_level || 'NORMAL'}
+                          onChange={(e: any) => handleInlineUrgencyChange(s.id, e.target.value, e)}
+                          className={`text-[11px] font-black px-2 py-1 rounded-lg border cursor-pointer focus:outline-hidden ${
+                            (s.urgency || s.urgency_level) === 'CRITICAL'
+                              ? 'bg-red-100 text-red-950 border-red-500 dark:bg-red-950 dark:text-red-200'
+                              : (s.urgency || s.urgency_level) === 'URGENT'
+                              ? 'bg-amber-100 text-amber-950 border-amber-500 dark:bg-amber-950 dark:text-amber-200'
+                              : isDark
+                              ? 'bg-slate-800 text-slate-200 border-slate-700'
+                              : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                          }`}
+                          title={language === 'th' ? 'ระดับความด่วน (คลิกเพื่อเปลี่ยน)' : 'Urgency Level (Click to change)'}
+                        >
+                          <option value="NORMAL">ปกติ</option>
+                          <option value="URGENT">ด่วน</option>
+                          <option value="CRITICAL">ด่วนมาก</option>
+                        </select>
+                      </td>
 
-                          {/* Quick inline status dropdown for User convenience */}
-                          <select
-                            value={s.status}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => handleInlineStatusChange(s.id, e.target.value, e)}
-                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border cursor-pointer focus:outline-hidden ${
-                              isDark
-                                ? 'bg-slate-800 text-slate-200 border-slate-700'
-                                : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                      {/* 8. STATUS - Clear Pill Badge */}
+                      <td className="py-3.5 px-3 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-black uppercase shadow-2xs ${
+                            s.status === 'ARRIVING_TODAY'
+                              ? 'bg-cyan-100 text-cyan-950 border border-cyan-400 dark:bg-cyan-950/80 dark:text-cyan-200 dark:border-cyan-700'
+                              : s.status === 'DELAYED'
+                              ? 'bg-red-100 text-red-950 border border-red-400 dark:bg-red-950/80 dark:text-red-200 dark:border-red-700'
+                              : s.status === 'RECEIVED'
+                              ? 'bg-emerald-100 text-emerald-950 border border-emerald-400 dark:bg-emerald-950/80 dark:text-emerald-200 dark:border-emerald-700'
+                              : 'bg-blue-100 text-blue-950 border border-blue-400 dark:bg-blue-950/80 dark:text-blue-200 dark:border-blue-700'
+                          }`}
+                        >
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              s.status === 'RECEIVED'
+                                ? 'bg-emerald-600 dark:bg-emerald-400'
+                                : s.status === 'DELAYED'
+                                ? 'bg-red-600 dark:bg-red-400'
+                                : 'bg-cyan-600 dark:bg-cyan-400 animate-pulse'
                             }`}
-                            title={language === 'th' ? 'เปลี่ยนสถานะด่วน' : 'Quick status change'}
-                          >
-                            <option value="IN_TRANSIT">IN TRANSIT</option>
-                            <option value="ARRIVING_TODAY">ARRIVING TODAY</option>
-                            <option value="DELAYED">DELAYED</option>
-                            <option value="RECEIVED">RECEIVED (รับแล้ว ✅)</option>
-                          </select>
-                        </div>
+                          ></span>
+                          {s.status.replace('_', ' ')}
+                        </span>
                       </td>
 
                       {/* 8. ACTIONS: แจ้งเตือน SRM / ตรวจรับอะไหล่ / ดูรายละเอียด */}

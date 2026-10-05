@@ -26,7 +26,10 @@ interface LocalUserSession {
     email: string;
     user_metadata: {
       full_name: string;
+      name?: string;
       employee_id: string;
+      role?: string;
+      department?: string;
     };
   };
   access_token: string;
@@ -36,7 +39,7 @@ const STORAGE_KEY_AUTH = 'srm_supabase_auth_session';
 const STORAGE_KEY_DB = 'srm_supabase_db_records';
 
 // Initial Mock Seed Data matching Unithai Shipyard Realistic Projects
-const INITIAL_DB = {
+export const INITIAL_DB = {
   profiles: [
     {
       id: 'usr-admin-001',
@@ -77,6 +80,32 @@ const INITIAL_DB = {
       created_at: '2026-03-01T10:00:00.000Z',
       updated_at: '2026-03-01T10:00:00.000Z',
     },
+    {
+      id: 'usr-cosrm-004',
+      name: 'Anan Prasert',
+      full_name: 'Anan Prasert',
+      employee_id: 'UT-03112',
+      role: 'CO_SRM' as const,
+      department: 'Ship Repair Management',
+      status: 'ACTIVE' as const,
+      email: 'anan.p@unithai.com',
+      last_login: new Date(Date.now() - 3600000).toISOString(),
+      created_at: '2026-02-20T08:00:00.000Z',
+      updated_at: '2026-02-20T08:00:00.000Z',
+    },
+    {
+      id: 'usr-incharge-005',
+      name: 'Natthapong Thongdee',
+      full_name: 'Natthapong Thongdee',
+      employee_id: 'UT-03405',
+      role: 'IN_CHARGE' as const,
+      department: 'Machinery & Dock Operations',
+      status: 'ACTIVE' as const,
+      email: 'natthapong.t@unithai.com',
+      last_login: new Date(Date.now() - 5400000).toISOString(),
+      created_at: '2026-02-25T08:00:00.000Z',
+      updated_at: '2026-02-25T08:00:00.000Z',
+    },
   ] as Profile[],
 
   jobs: [
@@ -87,6 +116,14 @@ const INITIAL_DB = {
       vessel: 'GAS LOMBOK',
       customer: 'PT Pertamina International Shipping',
       status: 'ACTIVE' as const,
+      eta: '2026-03-25',
+      etd: '2026-04-10',
+      srm_id: 'usr-srm-002',
+      srm_name: 'Ing (Preecha Kittisup)',
+      co_srm_id: 'usr-cosrm-004',
+      co_srm_name: 'Anan Prasert',
+      in_charge_id: 'usr-incharge-005',
+      in_charge_name: 'Natthapong Thongdee',
       created_at: '2026-03-01T08:00:00.000Z',
       updated_at: '2026-03-01T08:00:00.000Z',
     },
@@ -97,6 +134,12 @@ const INITIAL_DB = {
       vessel: 'SEMERU',
       customer: 'Samudera Indonesia',
       status: 'ACTIVE' as const,
+      eta: '2026-03-28',
+      etd: '2026-04-15',
+      srm_id: 'usr-srm-002',
+      srm_name: 'Ing (Preecha Kittisup)',
+      co_srm_id: 'usr-cosrm-004',
+      co_srm_name: 'Anan Prasert',
       created_at: '2026-03-05T08:00:00.000Z',
       updated_at: '2026-03-05T08:00:00.000Z',
     },
@@ -107,6 +150,12 @@ const INITIAL_DB = {
       vessel: 'THOR CONFIDENCE',
       customer: 'Thoresen Shipping',
       status: 'ACTIVE' as const,
+      eta: '2026-04-02',
+      etd: '2026-04-20',
+      srm_id: 'usr-srm-003',
+      srm_name: 'Kamonchanok Chaiyamat',
+      in_charge_id: 'usr-incharge-005',
+      in_charge_name: 'Natthapong Thongdee',
       created_at: '2026-03-10T08:00:00.000Z',
       updated_at: '2026-03-10T08:00:00.000Z',
     },
@@ -117,6 +166,8 @@ const INITIAL_DB = {
       vessel: 'WAN HAI 312',
       customer: 'Wan Hai Lines',
       status: 'ACTIVE' as const,
+      eta: '2026-04-05',
+      etd: '2026-04-25',
       created_at: '2026-03-15T08:00:00.000Z',
       updated_at: '2026-03-15T08:00:00.000Z',
     },
@@ -382,7 +433,7 @@ const INITIAL_DB = {
   ] as SparePart[],
 };
 
-function getLocalDb() {
+export function getLocalDb() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DB);
     if (!raw) {
@@ -400,7 +451,7 @@ function getLocalDb() {
   }
 }
 
-function saveLocalDb(data: typeof INITIAL_DB) {
+export function saveLocalDb(data: typeof INITIAL_DB) {
   try {
     localStorage.setItem(STORAGE_KEY_DB, JSON.stringify(data));
   } catch {
@@ -624,7 +675,10 @@ export const localAuth = {
         email,
         user_metadata: {
           full_name: fullName,
+          name: fullName,
           employee_id: employeeId,
+          role,
+          department,
         },
       },
       access_token: `token-${userId}`,
@@ -657,7 +711,10 @@ export const localAuth = {
         email: profile.email || email,
         user_metadata: {
           full_name: profile.full_name,
+          name: profile.name || profile.full_name,
           employee_id: profile.employee_id,
+          role: profile.role,
+          department: profile.department,
         },
       },
       access_token: `token-${profile.id}`,

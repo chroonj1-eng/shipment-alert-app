@@ -20,6 +20,7 @@ import {
   Anchor,
 } from 'lucide-react';
 import { RoleType } from '../types/database';
+import { UNITHAI_DEPARTMENTS } from '../lib/departments';
 
 export const AuthView: React.FC = () => {
   const { isDark } = useTheme();
@@ -40,7 +41,9 @@ export const AuthView: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [role, setRole] = useState<RoleType>('SRM');
-  const [department, setDepartment] = useState('Ship Repair Management');
+  const [department, setDepartment] = useState('Ship Repair Management (SRM)');
+  const [customDepartment, setCustomDepartment] = useState('');
+  const [isCustomDept, setIsCustomDept] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -72,6 +75,10 @@ export const AuthView: React.FC = () => {
         setFormError(language === 'th' ? 'กรุณาระบุรหัสพนักงาน (เช่น UT-02488)' : 'Please enter your Employee ID (e.g. UT-02488).');
         return;
       }
+      if (isCustomDept && !customDepartment.trim()) {
+        setFormError(language === 'th' ? 'กรุณาระบุชื่อแผนกของคุณ' : 'Please specify your department name.');
+        return;
+      }
       if (!email.trim()) {
         setFormError(language === 'th' ? 'กรุณาระบุอีเมลองค์กรที่ถูกต้อง' : 'Please enter a valid work email.');
         return;
@@ -85,6 +92,10 @@ export const AuthView: React.FC = () => {
         return;
       }
 
+      const resolvedDept = isCustomDept
+        ? (customDepartment.trim() || 'Ship Repair Management (SRM)')
+        : department;
+
       const res = await register({
         fullName,
         name: fullName,
@@ -92,7 +103,7 @@ export const AuthView: React.FC = () => {
         email,
         password,
         role,
-        department,
+        department: resolvedDept,
       });
 
       if (!res.success && res.error) {
@@ -131,14 +142,9 @@ export const AuthView: React.FC = () => {
             <img src={unithaiLogo} alt="Unithai Shipyard Official Logo" className="w-full h-full object-contain" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className={`font-extrabold tracking-tight text-base font-sans ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                {t.appTitle}
-              </span>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">
-                {t.srmSystem}
-              </span>
-            </div>
+            <span className={`font-extrabold tracking-tight text-base font-sans block ${isDark ? 'text-white' : 'text-slate-900'}`}>
+              {t.appTitle}
+            </span>
             <p className={`text-[11px] font-mono hidden sm:block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
               {t.appSubtitle}
             </p>
@@ -322,20 +328,13 @@ export const AuthView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Role Selector: ADMIN, SRM, CO_SRM, IN_CHARGE, ENGINEER, USER */}
+                  {/* Role Selector: SRM, CO_SRM, IN_CHARGE, ENGINEER, USER (ADMIN can only be assigned by Administrator) */}
                   <div>
                     <label className={`block text-xs font-bold mb-1.5 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                       {language === 'th' ? 'เลือกตำแหน่ง / บทบาทหน้าที่ *' : 'Select Role / Position *'}
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {[
-                        {
-                          id: 'ADMIN' as RoleType,
-                          title: 'ADMIN',
-                          sub: language === 'th' ? 'ผู้ดูแลระบบ (เต็มสิทธิ์)' : 'Administrator (Full)',
-                          icon: '👑',
-                          selectedStyle: isDark ? 'border-amber-500 bg-amber-500/15 text-amber-300 ring-2 ring-amber-500/30' : 'border-amber-500 bg-amber-50 text-amber-900 ring-2 ring-amber-500/30',
-                        },
                         {
                           id: 'SRM' as RoleType,
                           title: 'SRM',
@@ -414,20 +413,45 @@ export const AuthView: React.FC = () => {
                       {language === 'th' ? 'แผนก / ฝ่าย (Department) *' : 'Department *'}
                     </label>
                     <select
-                      value={department}
-                      onChange={(e) => setDepartment(e.target.value)}
+                      value={isCustomDept ? '__OTHER__' : department}
+                      onChange={(e) => {
+                        if (e.target.value === '__OTHER__') {
+                          setIsCustomDept(true);
+                        } else {
+                          setIsCustomDept(false);
+                          setDepartment(e.target.value);
+                        }
+                      }}
                       className={`w-full px-3 py-2 text-xs rounded-xl border focus:outline-hidden transition-all ${
                         isDark
                           ? 'bg-slate-800/80 border-slate-700 text-white focus:border-cyan-500'
                           : 'bg-white border-slate-300 text-slate-900 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20'
                       }`}
                     >
-                      <option value="Ship Repair Management">Ship Repair Management (SRM)</option>
-                      <option value="Marine Engineering & Machinery">Marine Engineering & Machinery</option>
-                      <option value="Logistics & Spare Parts Procurement">Logistics & Spare Parts Procurement</option>
-                      <option value="Hull & Structural Overhaul">Hull & Structural Overhaul</option>
-                      <option value="Quality Assurance & Yard Safety">Quality Assurance & Yard Safety</option>
+                      {UNITHAI_DEPARTMENTS.map((dept) => (
+                        <option key={dept.id} value={dept.id}>
+                          {language === 'th' ? dept.nameTh : dept.nameEn}
+                        </option>
+                      ))}
                     </select>
+
+                    {/* Custom Department Name Input */}
+                    {isCustomDept && (
+                      <div className="mt-2 animate-fade-in">
+                        <input
+                          type="text"
+                          required
+                          placeholder={language === 'th' ? 'กรุณาระบุชื่อแผนกของคุณ (เช่น แผนกเครื่องกล)...' : 'Specify department name...'}
+                          value={customDepartment}
+                          onChange={(e) => setCustomDepartment(e.target.value)}
+                          className={`w-full px-3 py-2 text-xs rounded-xl border focus:outline-hidden transition-all ${
+                            isDark
+                              ? 'bg-slate-800/80 border-slate-700 text-white placeholder:text-slate-500 focus:border-cyan-500'
+                              : 'bg-white border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20'
+                          }`}
+                        />
+                      </div>
+                    )}
                   </div>
                 </>
               )}

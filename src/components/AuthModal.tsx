@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, UserRole, JobProject, AlertRuleConfig } from '../types';
 import { Language, translations } from '../i18n/translations';
+import { UNITHAI_DEPARTMENTS } from '../lib/departments';
 import unithaiLogo from '../assets/images/unithai_official_original_logo.jpg';
 import { X, ShieldCheck, Mail, User as UserIcon, Key, AlertCircle } from 'lucide-react';
 
@@ -46,7 +47,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [name, setName] = useState('');
   const [emailPrefix, setEmailPrefix] = useState('');
   const [role, setRole] = useState<UserRole>('srm');
-  const [department, setDepartment] = useState('Ship Repair Management');
+  const [department, setDepartment] = useState('Ship / Project Management & Planning');
+  const [customDepartment, setCustomDepartment] = useState('');
+  const [isCustomDept, setIsCustomDept] = useState(false);
+  const [deptViewMode, setDeptViewMode] = useState<'radio' | 'dropdown'>('radio');
+  const [deptSearch, setDeptSearch] = useState('');
   const [phone, setPhone] = useState('');
   const [selectedJob, setSelectedJob] = useState(allJobs[0]?.jobNo || '');
   const [registerError, setRegisterError] = useState('');
@@ -105,6 +110,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    const resolvedDept = isCustomDept
+      ? (customDepartment.trim() || 'Ship / Project Management & Planning')
+      : department;
+
     // Generate 6-digit OTP code for identity verification
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedOtp(code);
@@ -112,7 +121,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       name,
       email,
       role,
-      department,
+      department: resolvedDept,
       phone,
       assignedJobs: selectedJob ? [selectedJob] : [],
     });
@@ -342,7 +351,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <option value="srm">{t.regRoleSrm}</option>
                     <option value="co_srm">{t.regRoleCoSrm}</option>
                     <option value="incharge">{t.regRoleIncharge}</option>
-                    <option value="admin">{t.regRoleAdmin}</option>
                   </select>
                 </div>
 
@@ -361,16 +369,124 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">
-                  {t.regDepartment}
-                </label>
-                <input
-                  type="text"
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                  placeholder={t.regDepartmentPlaceholder}
-                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs"
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-slate-700 font-semibold text-xs flex items-center gap-1.5">
+                    <span>{t.regDepartment}</span>
+                    <span className="text-[11px] text-cyan-600 font-normal">
+                      ({lang === 'th' ? 'ติ๊กเลือกแผนก 17 แผนก' : 'Tick 17 departments'})
+                    </span>
+                  </label>
+                  <div className="flex items-center gap-1 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setDeptViewMode('radio')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                        deptViewMode === 'radio'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {lang === 'th' ? 'รายการติ๊กเลือก (Radio)' : 'Radio List'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeptViewMode('dropdown')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                        deptViewMode === 'dropdown'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {lang === 'th' ? 'ดรอปดาวน์' : 'Dropdown'}
+                    </button>
+                  </div>
+                </div>
+
+                {deptViewMode === 'dropdown' ? (
+                  <select
+                    value={isCustomDept ? '__OTHER__' : department}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomDept(true);
+                      } else {
+                        setIsCustomDept(false);
+                        setDepartment(e.target.value);
+                      }
+                    }}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs cursor-pointer bg-white text-slate-800"
+                  >
+                    {UNITHAI_DEPARTMENTS.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {lang === 'th' ? d.nameTh : d.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="border border-slate-300 rounded-xl overflow-hidden bg-slate-50/70 p-2">
+                    <input
+                      type="text"
+                      placeholder={lang === 'th' ? '🔍 พิมพ์ค้นหาแผนก...' : '🔍 Search department...'}
+                      value={deptSearch}
+                      onChange={(e) => setDeptSearch(e.target.value)}
+                      className="w-full mb-2 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:border-cyan-500"
+                    />
+                    <div className="max-h-44 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                      {UNITHAI_DEPARTMENTS.filter((d) => {
+                        if (!deptSearch.trim()) return true;
+                        const q = deptSearch.toLowerCase();
+                        return d.nameEn.toLowerCase().includes(q) || d.nameTh.toLowerCase().includes(q);
+                      }).map((d) => {
+                        const isChecked = isCustomDept ? d.id === '__OTHER__' : department === d.id;
+                        return (
+                          <label
+                            key={d.id}
+                            className={`flex items-start gap-2 p-1.5 rounded-lg cursor-pointer transition-all border text-xs ${
+                              isChecked
+                                ? 'bg-cyan-50 border-cyan-500 text-cyan-950 font-semibold shadow-xs'
+                                : 'bg-white border-slate-200 hover:border-cyan-300 text-slate-700'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="modal_dept_radio"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (d.id === '__OTHER__') {
+                                  setIsCustomDept(true);
+                                } else {
+                                  setIsCustomDept(false);
+                                  setDepartment(d.id);
+                                }
+                              }}
+                              className="mt-0.5 text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11.5px] leading-tight font-medium text-slate-900">
+                                {d.nameEn}
+                              </div>
+                              <div className="text-[9.5px] text-slate-500 font-normal mt-0.5">
+                                {d.nameTh}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {isCustomDept && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder={lang === 'th' ? 'ระบุชื่อแผนกของคุณ...' : 'Specify your department name...'}
+                      value={customDepartment}
+                      onChange={(e) => setCustomDepartment(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white text-slate-800"
+                    />
+                  </div>
+                )}
               </div>
 
               {role !== 'admin' && allJobs.length > 0 && (

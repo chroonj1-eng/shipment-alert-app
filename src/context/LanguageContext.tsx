@@ -100,6 +100,12 @@ export interface Translations {
   vesselName: string;
   customerName: string;
   scopeProject: string;
+  vesselEta: string;
+  vesselEtd: string;
+  assignLater: string;
+  leadSrm: string;
+  coSrm: string;
+  inCharge: string;
   assignedSrms: string;
   assignSrmPlaceholder: string;
   noSrmAssigned: string;
@@ -172,8 +178,8 @@ export interface Translations {
 
 export const appTranslations: Record<Language, Translations> = {
   th: {
-    appTitle: 'UNITHAI SHIPYARD',
-    appSubtitle: 'ระบบบริหารจัดการอะไหล่เรือ & โครงการซ่อมเรือ SRM',
+    appTitle: 'Ship Spare Tracker',
+    appSubtitle: 'Unithai Shipyard & Engineering',
     srmSystem: 'ระบบ SRM',
 
     navDashboard: 'แดชบอร์ด',
@@ -181,7 +187,7 @@ export const appTranslations: Record<Language, Translations> = {
     navAdminDashboard: 'แดชบอร์ดผู้ดูแล',
     navUserManagement: 'จัดการผู้ใช้งาน & สิทธิ์',
     navJobAssignments: 'มอบหมายงาน & เรือ',
-    navAllShipments: 'พัสดุและอะไหล่ทั้งหมด',
+    navAllShipments: 'Shipment ทั้งหมด',
     navMyShipments: 'อะไหล่เรือของฉัน',
     navSignOut: 'ออกจากระบบ',
     switchRoleBtn: 'สลับไปเป็น',
@@ -232,11 +238,11 @@ export const appTranslations: Record<Language, Translations> = {
     jobsAndSrmsBtn: 'งานเรือ & SRM',
     statTotalUsers: 'ผู้ใช้งานทั้งหมด',
     statTotalJobs: 'โปรเจคเรือในอู่',
-    statTotalShipments: 'พัสดุอะไหล่ทั้งหมด',
-    statDelayedShipments: 'พัสดุที่ล่าช้า',
+    statTotalShipments: 'Shipment ทั้งหมด',
+    statDelayedShipments: 'Shipment ที่ล่าช้า',
     recentRegistrations: 'ผู้ลงทะเบียนล่าสุด',
     recentJobs: 'โครงการเรือในอู่',
-    recentShipments: 'พัสดุและอะไหล่ล่าสุด',
+    recentShipments: 'Shipment ล่าสุด',
     viewAll: 'ดูทั้งหมด',
 
     userManagementTitle: 'ระบบจัดการผู้ใช้งานและสิทธิ์ (User Management)',
@@ -256,13 +262,19 @@ export const appTranslations: Record<Language, Translations> = {
     noneAssigned: 'ยังไม่ได้รับมอบหมาย',
 
     jobsAndAssignmentsTitle: 'โครงการเรือ & การมอบหมาย SRM',
-    jobsAndAssignmentsDesc: 'สร้างโครงการซ่อมเรือและกำหนด SRM ประจำเรือ (เช่น Ing → 26-R-2928, 26-R-2931)',
-    newJobBtn: 'เพิ่มโครงการเรือ',
+    jobsAndAssignmentsDesc: 'สร้างรายละเอียด Job เรือและกำหนดทีม SRM, CO SRM, IN CHARGE ประจำเรือ',
+    newJobBtn: 'เพิ่มรายละเอียด Job เรือ',
     jobNo: 'เลขที่ Job No.',
     vesselName: 'ชื่อเรือ (Vessel)',
     customerName: 'ลูกค้า / เจ้าของเรือ',
     scopeProject: 'ขอบเขตงานซ่อม / รายละเอียด',
-    assignedSrms: 'SRM ที่ดูแล',
+    vesselEta: 'ETA (วันเรือเข้าเทียบ / Estimated Arrival)',
+    vesselEtd: 'ETD (วันเรือออกจากอู่ / Estimated Departure)',
+    assignLater: 'มอบหมายภายหลัง',
+    leadSrm: 'กำหนด SRM ประจำเรือ',
+    coSrm: 'กำหนด CO SRM ประจำเรือ',
+    inCharge: 'กำหนด IN CHARGE ประจำเรือ',
+    assignedSrms: 'ทีมงานที่ดูแล',
     assignSrmPlaceholder: '+ มอบหมาย SRM เพิ่มเติม...',
     noSrmAssigned: 'ยังไม่มี SRM รับผิดชอบ โปรดมอบหมายด้านล่าง',
 
@@ -289,9 +301,9 @@ export const appTranslations: Record<Language, Translations> = {
     myNotificationsTitle: 'การแจ้งเตือนงานและการมาถึงของอะไหล่',
     noNotifications: 'ไม่มีรายการแจ้งเตือนใหม่',
 
-    allConsignmentsTitle: 'รายการพัสดุอะไหล่และชิ้นส่วนเรือทั้งหมด',
+    allConsignmentsTitle: 'รายการ Shipment ทั้งหมด',
     allConsignmentsSub: 'ติดตามการขนส่งทางอากาศ เรือ และขนส่งในประเทศสำหรับอู่เรือแหลมฉบัง',
-    newShipmentBtn: 'ลงทะเบียนพัสดุใหม่',
+    newShipmentBtn: 'ลงทะเบียน Shipment ใหม่',
     updateStatus: 'เปลี่ยนสถานะ',
 
     // Urgency & Actions (Thai)
@@ -313,7 +325,7 @@ export const appTranslations: Record<Language, Translations> = {
     thActions: 'แจ้งเตือน SRM / ดำเนินการ',
 
     // Marine Spare Parts Tracker (Thai)
-    navSparePartsTracker: 'คลังอะไหล่เรือ (Tracker)',
+    navSparePartsTracker: 'คลังชิปเม้น',
     addPartBtn: 'เพิ่มอะไหล่ใหม่',
     editPartBtn: 'แก้ไขข้อมูลอะไหล่',
     deletePartBtn: 'ลบอะไหล่',
@@ -331,8 +343,8 @@ export const appTranslations: Record<Language, Translations> = {
   },
 
   en: {
-    appTitle: 'UNITHAI SHIPYARD',
-    appSubtitle: 'SRM Spare Part Management & Vessel Logistics System',
+    appTitle: 'Ship Spare Tracker',
+    appSubtitle: 'Unithai Shipyard & Engineering',
     srmSystem: 'SRM SYSTEM',
 
     navDashboard: 'Dashboard',
@@ -415,13 +427,19 @@ export const appTranslations: Record<Language, Translations> = {
     noneAssigned: 'None assigned',
 
     jobsAndAssignmentsTitle: 'Shipyard Jobs & SRM Assignments',
-    jobsAndAssignmentsDesc: 'Create vessel repair projects and designate lead SRMs (e.g. Ing → 26-R-2928, 26-R-2931)',
-    newJobBtn: 'New Job',
+    jobsAndAssignmentsDesc: 'Create vessel job details and designate SRM, CO SRM, and IN CHARGE teams',
+    newJobBtn: 'Add Vessel Job Details',
     jobNo: 'Job Number',
     vesselName: 'Vessel Name',
     customerName: 'Customer / Owner',
     scopeProject: 'Scope / Project Name',
-    assignedSrms: 'Assigned SRMs',
+    vesselEta: 'ETA (Estimated Vessel Arrival)',
+    vesselEtd: 'ETD (Estimated Vessel Departure)',
+    assignLater: 'Assign Later',
+    leadSrm: 'Designate Lead SRM',
+    coSrm: 'Designate CO SRM',
+    inCharge: 'Designate IN CHARGE',
+    assignedSrms: 'Assigned Teams',
     assignSrmPlaceholder: '+ Assign an SRM to this job...',
     noSrmAssigned: 'No SRM assigned yet. Assign an officer below.',
 
@@ -472,7 +490,7 @@ export const appTranslations: Record<Language, Translations> = {
     thActions: 'ACTIONS / STATUS',
 
     // Marine Spare Parts Tracker (English)
-    navSparePartsTracker: 'Spare Parts Tracker',
+    navSparePartsTracker: 'Shipment Inventory',
     addPartBtn: 'Add Spare Part',
     editPartBtn: 'Edit Part',
     deletePartBtn: 'Delete Part',

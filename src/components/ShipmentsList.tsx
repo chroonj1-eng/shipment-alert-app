@@ -6,6 +6,13 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ShipmentDetailModal } from './ShipmentDetailModal';
 import {
+  updateShipmentUrgency,
+  markShipmentReceived,
+  adminCreateShipment,
+  adminUpdateShipment,
+  adminDeleteShipment,
+} from '../services/rbacService';
+import {
   Package,
   Plane,
   Anchor,
@@ -22,6 +29,8 @@ import {
   Ship,
   Flame,
   Zap,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
 
 export const ShipmentsList: React.FC = () => {
@@ -57,6 +66,29 @@ export const ShipmentsList: React.FC = () => {
   const [urgency, setUrgency] = useState<'CRITICAL' | 'URGENT' | 'NORMAL'>('NORMAL');
   const [eta, setEta] = useState(new Date(Date.now() + 86400000).toISOString().split('T')[0]);
   const [status, setStatus] = useState<'IN_TRANSIT' | 'ARRIVING_TODAY' | 'RECEIVED' | 'DELAYED'>('IN_TRANSIT');
+
+  // Admin Edit Shipment Modal State
+  const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
+  const [editJobId, setEditJobId] = useState('');
+  const [editBookingNo, setEditBookingNo] = useState('');
+  const [editPoNo, setEditPoNo] = useState('');
+  const [editAwbBl, setEditAwbBl] = useState('');
+  const [editFlightVessel, setEditFlightVessel] = useState('');
+  const [editDescriptionOfGoods, setEditDescriptionOfGoods] = useState('');
+  const [editPackageQty, setEditPackageQty] = useState('');
+  const [editSupplier, setEditSupplier] = useState('');
+  const [editOrigin, setEditOrigin] = useState('');
+  const [editDestination, setEditDestination] = useState('Unithai Shipyard Laem Chabang');
+  const [editMode, setEditMode] = useState<'AIR' | 'SEA' | 'COURIER' | 'LAND'>('AIR');
+  const [editUrgency, setEditUrgency] = useState<'CRITICAL' | 'URGENT' | 'NORMAL'>('NORMAL');
+  const [editEta, setEditEta] = useState('');
+  const [editStatus, setEditStatus] = useState<'IN_TRANSIT' | 'ARRIVING_TODAY' | 'RECEIVED' | 'DELAYED'>('IN_TRANSIT');
+  const [isEditingSubmitting, setIsEditingSubmitting] = useState(false);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+
+  // Admin Delete Shipment State
+  const [deletingShipment, setDeletingShipment] = useState<Shipment | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const BASELINE_JOBS: Job[] = [
     {
@@ -213,6 +245,12 @@ export const ShipmentsList: React.FC = () => {
     e.preventDefault();
     setModalError(null);
 
+    // SECURITY CHECK: Only ADMIN is permitted to add a new shipment
+    if (!isAdmin) {
+      setModalError(language === 'th' ? 'ไม่มีสิทธิ์: เฉพาะ ADMIN เท่านั้นที่สามารถเพิ่ม Shipment ได้' : 'Access Denied: Only ADMIN can create new shipments.');
+      return;
+    }
+
     // Validation
     if (!jobId) {
       setModalError(language === 'th' ? 'กรุณาเลือกโครงการเรือเป้าหมาย' : 'Please select a target vessel job');
@@ -352,12 +390,106 @@ export const ShipmentsList: React.FC = () => {
 
   const handleUpdateStatus = async (shipmentId: string, newStatus: any, e: React.MouseEvent | React.ChangeEvent<any>) => {
     e.stopPropagation();
-    await supabase.from('shipments').update({
-      status: newStatus,
-      received_date: newStatus === 'RECEIVED' ? new Date().toISOString() : null,
-      receiver_name: newStatus === 'RECEIVED' ? (currentUser?.full_name || 'SRM Officer') : null,
-      receiver_notes: newStatus === 'RECEIVED' ? (language === 'th' ? 'ตรวจรับเข้าอู่เรือแล้ว' : 'Received into shipyard') : null,
-    }).eq('id', shipmentId);
+    // SECURITY RULE: SRM may change a shipment ONLY to RECEIVED. Cannot change back or to any other status.
+    if (!isAdmin && newStatus !== 'RECEIVED') {
+      console.warn('[RBAC Denied] SRM is not authorized to change status to:', newStatus);
+      return;
+    }
+
+    if (newStatus === 'RECEIVED') {
+      await markShipmentReceived(shipmentId, currentUser);
+    } else if (isAdmin) {
+      await supabase.from('shipments').update({
+        status: newStatus,
+        received_date: null,
+      }).eq('id', shipmentId);
+    }
+
+    await loadData();
+    window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+  };
+
+  const handleUpdateUrgency = async (shipmentId: string, newUrgency: 'CRITICAL' | 'URGENT' | 'NORMAL', e: React.ChangeEvent<any>) => {
+    e.stopPropagation();
+    // SECURITY RULE: SRM may change ONLY urgency between CRITICAL, URGENT, NORMAL
+    if (!['CRITICAL', 'URGENT', 'NORMAL'].includes(newUrgency)) return;
+    await updateShipmentUrgency(shipmentId, newUrgency, currentUser);
+    await loadData();
+    window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+  };
+
+  // ADMIN ONLY: Open Edit Shipment Modal
+  const handleOpenEditShipment = (shipment: Shipment, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAdmin) return;
+    setEditingShipment(shipment);
+    setEditJobId(shipment.job_id || '');
+    setEditBookingNo(shipment.booking_no || '');
+    setEditPoNo(shipment.po_no || '');
+    setEditAwbBl(shipment.awb_bl || '');
+    setEditFlightVessel(shipment.flight_vessel || '');
+    setEditDescriptionOfGoods(shipment.description_of_goods || '');
+    setEditPackageQty(shipment.package_qty || '');
+    setEditSupplier(shipment.supplier || '');
+    setEditOrigin(shipment.origin || '');
+    setEditDestination(shipment.destination || 'Unithai Shipyard Laem Chabang');
+    setEditMode(shipment.mode || 'AIR');
+    setEditUrgency(shipment.urgency || 'NORMAL');
+    setEditEta(shipment.eta ? new Date(shipment.eta).toISOString().split('T')[0] : '');
+    setEditStatus(shipment.status || 'IN_TRANSIT');
+    setEditModalError(null);
+  };
+
+  // ADMIN ONLY: Save Edited Shipment
+  const handleSaveEditShipment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !editingShipment) return;
+    setIsEditingSubmitting(true);
+    setEditModalError(null);
+
+    const updates: Partial<Shipment> = {
+      job_id: editJobId,
+      booking_no: editBookingNo.trim(),
+      po_no: editPoNo.trim(),
+      awb_bl: editAwbBl.trim().toUpperCase(),
+      flight_vessel: editFlightVessel.trim(),
+      description_of_goods: editDescriptionOfGoods.trim(),
+      package_qty: editPackageQty.trim(),
+      supplier: editSupplier.trim(),
+      origin: editOrigin.trim(),
+      destination: editDestination.trim(),
+      mode: editMode,
+      urgency: editUrgency,
+      status: editStatus,
+      eta: editEta ? new Date(editEta).toISOString() : editingShipment.eta,
+      received_date: editStatus === 'RECEIVED' ? (editingShipment.received_date || new Date().toISOString()) : null,
+    };
+
+    const res = await adminUpdateShipment(editingShipment.id, updates, currentUser);
+    if (!res.success) {
+      setEditModalError(res.error || 'Failed to update shipment');
+      setIsEditingSubmitting(false);
+      return;
+    }
+
+    setEditingShipment(null);
+    setIsEditingSubmitting(false);
+    await loadData();
+    window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+  };
+
+  // ADMIN ONLY: Delete Shipment
+  const handleConfirmDeleteShipment = async () => {
+    if (!isAdmin || !deletingShipment) return;
+    setIsDeleting(true);
+    const res = await adminDeleteShipment(deletingShipment.id, currentUser);
+    if (!res.success) {
+      alert('Delete failed: ' + res.error);
+      setIsDeleting(false);
+      return;
+    }
+    setDeletingShipment(null);
+    setIsDeleting(false);
     await loadData();
     window.dispatchEvent(new CustomEvent('supabase-data-changed'));
   };
@@ -406,7 +538,7 @@ export const ShipmentsList: React.FC = () => {
             />
           </div>
 
-          {(isAdmin || isSRM || currentUser) && (
+          {isAdmin && (
             <button
               onClick={() => setIsModalOpen(true)}
               className="px-3.5 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shrink-0 cursor-pointer"
@@ -444,7 +576,7 @@ export const ShipmentsList: React.FC = () => {
             }`}
           >
             <Flame className="w-3 h-3 text-red-600 dark:text-red-400" />
-            <span>CRITICAL</span>
+            <span>{language === 'th' ? 'ด่วนมาก' : 'CRITICAL'}</span>
           </button>
           <button
             onClick={() => setUrgencyFilter('URGENT')}
@@ -484,7 +616,7 @@ export const ShipmentsList: React.FC = () => {
               }`}
             >
               {st === 'ALL'
-                ? (language === 'th' ? 'พัสดุทั้งหมด' : 'ALL SHIPMENTS')
+                ? (language === 'th' ? 'Shipment ทั้งหมด' : 'ALL SHIPMENTS')
                 : st === 'ARRIVING_TODAY'
                 ? (language === 'th' ? 'ถึงวันนี้' : 'Arriving')
                 : st === 'RECEIVED'
@@ -517,6 +649,7 @@ export const ShipmentsList: React.FC = () => {
                 <th className="py-3.5 px-4 font-black">{t.colSupplierOrigin}</th>
                 <th className="py-3.5 px-4 font-black">{t.colMode}</th>
                 <th className="py-3.5 px-4 font-black">{t.colEta}</th>
+                <th className="py-3.5 px-3 font-black">{language === 'th' ? 'ระดับความด่วน' : 'Urgency'}</th>
                 <th className="py-3.5 px-4 font-black">{t.status}</th>
                 <th className="py-3.5 px-4 font-black text-right">{language === 'th' ? 'การดำเนินการ' : 'Actions'}</th>
               </tr>
@@ -524,14 +657,14 @@ export const ShipmentsList: React.FC = () => {
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-700 dark:text-slate-300">
+                  <td colSpan={9} className="py-12 text-center text-slate-700 dark:text-slate-300">
                     <div className="inline-block w-6 h-6 border-2 border-cyan-600 border-t-transparent rounded-full animate-spin mb-2"></div>
                     <p className="font-bold">{t.loading}</p>
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-700 dark:text-slate-300">
+                  <td colSpan={9} className="py-12 text-center text-slate-700 dark:text-slate-300">
                     <p className="font-bold text-sm">
                       {language === 'th' ? 'ไม่พบรายการพัสดุที่ตรงกับเงื่อนไข' : 'No shipments found matching current filters.'}
                     </p>
@@ -622,6 +755,28 @@ export const ShipmentsList: React.FC = () => {
                         {new Date(s.eta).toLocaleDateString()}
                       </td>
 
+                      {/* Urgency Level (CRITICAL / URGENT / NORMAL) - SRM & Admin can modify */}
+                      <td className="py-3.5 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={s.urgency || s.urgency_level || 'NORMAL'}
+                          onChange={(e) => handleUpdateUrgency(s.id, e.target.value as any, e)}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-black border cursor-pointer focus:outline-hidden ${
+                            (s.urgency || s.urgency_level) === 'CRITICAL'
+                              ? 'bg-red-100 text-red-950 border-red-500 dark:bg-red-950 dark:text-red-200'
+                              : (s.urgency || s.urgency_level) === 'URGENT'
+                              ? 'bg-amber-100 text-amber-950 border-amber-500 dark:bg-amber-950 dark:text-amber-200'
+                              : isDark
+                              ? 'bg-slate-800 text-slate-200 border-slate-700'
+                              : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                          }`}
+                          title={language === 'th' ? 'ระดับความด่วน (คลิกเพื่อเปลี่ยน)' : 'Urgency Level (Click to change)'}
+                        >
+                          <option value="NORMAL">ปกติ</option>
+                          <option value="URGENT">ด่วน</option>
+                          <option value="CRITICAL">ด่วนมาก</option>
+                        </select>
+                      </td>
+
                       {/* Status */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <span
@@ -668,6 +823,32 @@ export const ShipmentsList: React.FC = () => {
                             </span>
                           )}
 
+                          {/* ADMIN ONLY: Edit & Delete buttons */}
+                          {isAdmin && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenEditShipment(s, e)}
+                                className="p-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:text-cyan-700 hover:border-cyan-500 transition-colors cursor-pointer"
+                                title={language === 'th' ? 'แก้ไข Shipment (Admin)' : 'Edit Shipment (Admin)'}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeletingShipment(s);
+                                }}
+                                className="p-1.5 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 hover:bg-red-600 hover:text-white transition-colors cursor-pointer"
+                                title={language === 'th' ? 'ลบ Shipment (Admin)' : 'Delete Shipment (Admin)'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+
                           <button
                             type="button"
                             onClick={(e) => {
@@ -701,7 +882,7 @@ export const ShipmentsList: React.FC = () => {
       )}
 
       {/* New Shipment Modal for Admin */}
-      {isModalOpen && (
+      {isAdmin && isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-200">
           <div
             className={`w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border p-6 shadow-2xl transition-all ${
@@ -712,7 +893,7 @@ export const ShipmentsList: React.FC = () => {
             <div className="flex items-center justify-between pb-3.5 border-b border-slate-200 dark:border-slate-800">
               <h3 className="font-bold text-base flex items-center gap-2 text-slate-900 dark:text-white">
                 <Package className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />
-                <span>{language === 'th' ? 'ลงทะเบียนพัสดุใหม่' : 'New Shipment Registration'}</span>
+                <span>{language === 'th' ? 'ลงทะเบียน Shipment ใหม่' : 'New Shipment Registration'}</span>
               </h3>
               <button
                 type="button"
@@ -966,11 +1147,277 @@ export const ShipmentsList: React.FC = () => {
                       <span>{language === 'th' ? 'กำลังบันทึก...' : 'Saving...'}</span>
                     </>
                   ) : (
-                    <span>{language === 'th' ? 'บันทึกพัสดุ' : 'Save Shipment'}</span>
+                    <span>{language === 'th' ? 'บันทึก Shipment' : 'Save Shipment'}</span>
                   )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN ONLY: Edit Shipment Modal */}
+      {isAdmin && editingShipment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border p-6 shadow-2xl transition-all ${
+              isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="font-bold text-base flex items-center gap-2 text-slate-900 dark:text-white">
+                <Edit2 className="w-5 h-5 text-cyan-500" />
+                <span>{language === 'th' ? 'แก้ไขข้อมูล Shipment (Admin)' : 'Edit Shipment (Admin)'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingShipment(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editModalError && (
+              <div className="mt-3 p-3 rounded-xl bg-red-500/15 border border-red-500/40 text-red-600 dark:text-red-400 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+                <span>{editModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditShipment} className="mt-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block text-xs font-bold mb-1">
+                  {language === 'th' ? 'โครงการเรือเป้าหมาย' : 'Target Shipyard Job'}
+                </label>
+                <select
+                  required
+                  value={editJobId}
+                  onChange={(e) => setEditJobId(e.target.value)}
+                  className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden cursor-pointer ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                >
+                  <option value="">{language === 'th' ? '-- เลือกงานเรือ --' : '-- Select Job --'}</option>
+                  {jobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.job_no} - {j.vessel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">BOOKING NO.</label>
+                  <input
+                    type="text"
+                    value={editBookingNo}
+                    onChange={(e) => setEditBookingNo(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-mono rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">P/O NO. / SUPPLY</label>
+                  <input
+                    type="text"
+                    value={editPoNo}
+                    onChange={(e) => setEditPoNo(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-mono rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">AWB / B/L NO. *</label>
+                  <input
+                    required
+                    type="text"
+                    value={editAwbBl}
+                    onChange={(e) => setEditAwbBl(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-mono rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">FLIGHT / VESSEL</label>
+                  <input
+                    type="text"
+                    value={editFlightVessel}
+                    onChange={(e) => setEditFlightVessel(e.target.value)}
+                    className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">
+                  {language === 'th' ? 'รายการอะไหล่ / คำอธิบาย' : 'Description of Goods'}
+                </label>
+                <input
+                  type="text"
+                  value={editDescriptionOfGoods}
+                  onChange={(e) => setEditDescriptionOfGoods(e.target.value)}
+                  className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {language === 'th' ? 'ผู้ผลิต (Supplier) *' : 'Supplier *'}
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={editSupplier}
+                    onChange={(e) => setEditSupplier(e.target.value)}
+                    className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {language === 'th' ? 'ต้นทาง (Origin)' : 'Origin'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editOrigin}
+                    onChange={(e) => setEditOrigin(e.target.value)}
+                    className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {language === 'th' ? 'ระดับความด่วน' : 'Urgency'}
+                  </label>
+                  <select
+                    value={editUrgency}
+                    onChange={(e: any) => setEditUrgency(e.target.value)}
+                    className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden cursor-pointer ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  >
+                    <option value="NORMAL">📦 NORMAL</option>
+                    <option value="URGENT">⚡ URGENT</option>
+                    <option value="CRITICAL">🚨 CRITICAL</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {language === 'th' ? 'สถานะ' : 'Status'}
+                  </label>
+                  <select
+                    value={editStatus}
+                    onChange={(e: any) => setEditStatus(e.target.value)}
+                    className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden cursor-pointer ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  >
+                    <option value="IN_TRANSIT">IN TRANSIT</option>
+                    <option value="ARRIVING_TODAY">ARRIVING TODAY</option>
+                    <option value="DELAYED">DELAYED</option>
+                    <option value="RECEIVED">RECEIVED</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {language === 'th' ? 'กำหนดถึง (ETA)' : 'ETA'}
+                  </label>
+                  <input
+                    type="date"
+                    value={editEta}
+                    onChange={(e) => setEditEta(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-mono rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingShipment(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+                >
+                  {language === 'th' ? 'ยกเลิก' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isEditingSubmitting}
+                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isEditingSubmitting ? (language === 'th' ? 'กำลังบันทึก...' : 'Saving...') : (language === 'th' ? 'บันทึกการแก้ไข' : 'Save Changes')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN ONLY: Delete Confirmation Modal */}
+      {isAdmin && deletingShipment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl transition-all ${
+              isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 rounded-xl bg-red-500/15 text-red-600 dark:text-red-400">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base">
+                  {language === 'th' ? 'ยืนยันการลบ Shipment?' : 'Delete Shipment?'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {language === 'th' ? 'การดำเนินการนี้ไม่สามารถยกเลิกได้' : 'This action cannot be undone.'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-700 dark:text-slate-300 p-3 rounded-xl bg-slate-100 dark:bg-slate-800/60 mb-5 font-mono">
+              AWB/BL: <strong>{deletingShipment.awb_bl}</strong><br />
+              Supplier: <strong>{deletingShipment.supplier}</strong>
+            </p>
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeletingShipment(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                {language === 'th' ? 'ยกเลิก' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDeleteShipment}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (language === 'th' ? 'กำลังลบ...' : 'Deleting...') : (language === 'th' ? 'ยืนยันลบ' : 'Confirm Delete')}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, getLocalDb, saveLocalDb, INITIAL_DB } from '../lib/supabase';
 import { Profile, Job, JobAssignment, RoleType } from '../types/database';
+import { UNITHAI_DEPARTMENTS, findMatchingDepartment } from '../lib/departments';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -20,6 +21,8 @@ import {
   XCircle,
   AlertTriangle,
   X,
+  Building2,
+  Check,
 } from 'lucide-react';
 
 export const AdminUserManagement: React.FC = () => {
@@ -38,6 +41,72 @@ export const AdminUserManagement: React.FC = () => {
   const [assigningUserId, setAssigningUserId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
 
+  // Edit User & Department Modal
+  const [editingUser, setEditingUser] = useState<Profile | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmpId, setEditEmpId] = useState('');
+  const [editRole, setEditRole] = useState<RoleType>('SRM');
+  const [editDept, setEditDept] = useState('');
+  const [editCustomDept, setEditCustomDept] = useState('');
+  const [isCustomDept, setIsCustomDept] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+
+  const handleOpenEditUser = (user: Profile) => {
+    setEditingUser(user);
+    setEditName(user.full_name || user.name || '');
+    setEditEmpId(user.employee_id || '');
+    setEditRole(user.role);
+    const currentDept = user.department || '';
+    const match = findMatchingDepartment(currentDept);
+    if (match && match.id !== '__OTHER__') {
+      setEditDept(match.id);
+      setIsCustomDept(false);
+      setEditCustomDept('');
+    } else {
+      setEditDept('__OTHER__');
+      setIsCustomDept(true);
+      setEditCustomDept(currentDept);
+    }
+  };
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setIsSavingUser(true);
+
+    const resolvedDept = isCustomDept
+      ? (editCustomDept.trim() || 'Ship Repair Management (SRM)')
+      : editDept;
+
+    const updates = {
+      full_name: editName.trim(),
+      name: editName.trim(),
+      employee_id: editEmpId.trim(),
+      role: editRole,
+      department: resolvedDept,
+    };
+
+    try {
+      await supabase.from('profiles').update(updates).eq('id', editingUser.id);
+    } catch {
+      // ignore
+    }
+
+    const localDb = getLocalDb();
+    if (localDb.profiles) {
+      const idx = localDb.profiles.findIndex((p: any) => p.id === editingUser.id);
+      if (idx >= 0) {
+        localDb.profiles[idx] = { ...localDb.profiles[idx], ...updates };
+        saveLocalDb(localDb);
+      }
+    }
+
+    await loadData();
+    window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+    setIsSavingUser(false);
+    setEditingUser(null);
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -47,11 +116,31 @@ export const AdminUserManagement: React.FC = () => {
         supabase.from('job_assignments').select('*'),
       ]);
 
-      if (profilesRes.data) setProfiles(profilesRes.data);
-      if (jobsRes.data) setJobs(jobsRes.data);
-      if (assignmentsRes.data) setAssignments(assignmentsRes.data);
+      const localDb = getLocalDb();
+
+      if (profilesRes.data && profilesRes.data.length > 0) {
+        setProfiles(profilesRes.data);
+      } else {
+        setProfiles(localDb.profiles || INITIAL_DB.profiles);
+      }
+
+      if (jobsRes.data && jobsRes.data.length > 0) {
+        setJobs(jobsRes.data);
+      } else {
+        setJobs(localDb.jobs || INITIAL_DB.jobs);
+      }
+
+      if (assignmentsRes.data && assignmentsRes.data.length > 0) {
+        setAssignments(assignmentsRes.data);
+      } else {
+        setAssignments(localDb.job_assignments || INITIAL_DB.job_assignments || []);
+      }
     } catch (err) {
       console.error('Error loading user management data:', err);
+      const localDb = getLocalDb();
+      setProfiles(localDb.profiles || INITIAL_DB.profiles);
+      setJobs(localDb.jobs || INITIAL_DB.jobs);
+      setAssignments(localDb.job_assignments || INITIAL_DB.job_assignments || []);
     } finally {
       setLoading(false);
     }
@@ -169,6 +258,7 @@ export const AdminUserManagement: React.FC = () => {
             >
               <tr>
                 <th className="py-3 px-4 font-semibold">{t.colUserEmployee}</th>
+                <th className="py-3 px-4 font-semibold">{language === 'th' ? 'แผนก (Department)' : 'Department'}</th>
                 <th className="py-3 px-4 font-semibold">{t.colRole}</th>
                 <th className="py-3 px-4 font-semibold">{t.colStatus}</th>
                 <th className="py-3 px-4 font-semibold">{t.colAssignedJobs}</th>
@@ -180,14 +270,14 @@ export const AdminUserManagement: React.FC = () => {
             <tbody className="divide-y divide-slate-800/40">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={8} className="py-8 text-center text-slate-400">
                     <div className="inline-block w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-2"></div>
                     <p>{t.loading}</p>
                   </td>
                 </tr>
               ) : filteredProfiles.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={8} className="py-8 text-center text-slate-400">
                     {language === 'th' ? `ไม่พบผู้ใช้ที่ตรงกับ "${searchQuery}"` : `No users found matching "${searchQuery}".`}
                   </td>
                 </tr>
@@ -212,6 +302,13 @@ export const AdminUserManagement: React.FC = () => {
                           </span>
                           <span className="text-[10px] text-slate-600 dark:text-slate-400">{user.email || 'N/A'}</span>
                         </div>
+                      </td>
+
+                      {/* Department */}
+                      <td className="py-3 px-4 font-mono text-[11px]">
+                        <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                          {user.department || (language === 'th' ? 'ไม่ได้ระบุ' : '-')}
+                        </span>
                       </td>
 
                       {/* Role Badge (Fixed from Supabase) */}
@@ -321,6 +418,16 @@ export const AdminUserManagement: React.FC = () => {
                       {/* Actions */}
                       <td className="py-3 px-4 text-right">
                         <div className="inline-flex items-center gap-1.5">
+                          {/* Edit User Profile & Department */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditUser(user)}
+                            className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:border-cyan-500 text-slate-500 hover:text-cyan-500 transition-colors cursor-pointer"
+                            title={language === 'th' ? 'แก้ไขข้อมูล / แผนก' : 'Edit User & Department'}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+
                           {/* Toggle Status */}
                           <button
                             type="button"
@@ -415,6 +522,150 @@ export const AdminUserManagement: React.FC = () => {
                 {t.confirm}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User & Department Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl transition-all ${
+              isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="font-extrabold text-base flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                <span>{language === 'th' ? 'แก้ไขข้อมูลผู้ใช้ & แผนก' : 'Edit User & Department'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingUser(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditUser} className="mt-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  {language === 'th' ? 'ชื่อ - นามสกุล' : 'Full Name'} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  {language === 'th' ? 'รหัสพนักงาน' : 'Employee ID'} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editEmpId}
+                  onChange={(e) => setEditEmpId(e.target.value)}
+                  className={`w-full p-2.5 text-xs font-mono rounded-xl border focus:outline-hidden ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  {t.colRole} *
+                </label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as RoleType)}
+                  className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden cursor-pointer ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                  }`}
+                >
+                  <option value="ADMIN">ADMIN (ผู้ดูแลระบบ)</option>
+                  <option value="SRM">SRM (Ship Repair Manager)</option>
+                  <option value="CO_SRM">CO SRM (Co-Lead SRM)</option>
+                  <option value="IN_CHARGE">IN CHARGE (Officer)</option>
+                  <option value="ENGINEER">ENGINEER (วิศวกร)</option>
+                  <option value="USER">USER (ผู้ใช้งานทั่วไป)</option>
+                </select>
+              </div>
+
+              {/* Department Selector */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1 flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <span>{language === 'th' ? 'แผนก / ฝ่าย (Department) *' : 'Department *'}</span>
+                </label>
+                <select
+                  value={isCustomDept ? '__OTHER__' : editDept}
+                  onChange={(e) => {
+                    if (e.target.value === '__OTHER__') {
+                      setIsCustomDept(true);
+                    } else {
+                      setIsCustomDept(false);
+                      setEditDept(e.target.value);
+                    }
+                  }}
+                  className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden cursor-pointer ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                  }`}
+                >
+                  {UNITHAI_DEPARTMENTS.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {language === 'th' ? d.nameTh : d.nameEn}
+                    </option>
+                  ))}
+                </select>
+
+                {isCustomDept && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder={language === 'th' ? 'พิมพ์ระบุชื่อแผนก...' : 'Specify department name...'}
+                      value={editCustomDept}
+                      onChange={(e) => setEditCustomDept(e.target.value)}
+                      className={`w-full p-2.5 text-xs rounded-xl border focus:outline-hidden ${
+                        isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs cursor-pointer"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingUser}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isSavingUser ? (
+                    <span>{language === 'th' ? 'กำลังบันทึก...' : 'Saving...'}</span>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>{t.save}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
