@@ -36,6 +36,13 @@ import {
 export const ShipmentsList: React.FC = () => {
   const { isDark } = useTheme();
   const { currentUser, isAdmin, isSRM } = useAuth();
+  console.log('[RBAC DEBUG]', {
+  currentUser,
+  isAdmin,
+  isSRM,
+  role: currentUser?.role,
+  status: currentUser?.status,
+});
   const { t, language } = useLanguage();
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
