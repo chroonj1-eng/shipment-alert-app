@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
-import { Shipment, Job, Profile } from '../types/database';
+import React, { useEffect, useState } from 'react';
+import { Shipment, Job, Profile, UrgencyLevel, ShipmentStatus } from '../types/database';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { markShipmentReceived, updateShipmentUrgency, adminUpdateShipment, adminDeleteShipment } from '../services/rbacService';
+import {
+  markShipmentReceived,
+  updateShipmentUrgency,
+  adminUpdateShipment,
+  adminDeleteShipment,
+} from '../services/rbacService';
 import {
   X,
   Package,
@@ -21,9 +26,9 @@ import {
   Check,
   Flame,
   Zap,
-  Tag,
   Trash2,
   Edit2,
+  Calendar,
 } from 'lucide-react';
 
 interface ShipmentDetailModalProps {
@@ -43,16 +48,30 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
 }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
-  const { currentUser, isAdmin } = useAuth();
+  const { currentUser } = useAuth();
+
+  // STRICT RBAC CHECK: Role source is strictly public.profiles.role
+  const isAdmin = currentUser?.role === 'ADMIN';
+  const isSRM = currentUser?.role === 'SRM';
 
   const [currentStatus, setCurrentStatus] = useState<string>(shipment.status);
-  const [currentUrgency, setCurrentUrgency] = useState<any>(shipment.urgency || 'NORMAL');
+  const [currentUrgency, setCurrentUrgency] = useState<UrgencyLevel>(
+    (shipment.urgency || 'NORMAL') as UrgencyLevel
+  );
   const [receiverNotes, setReceiverNotes] = useState<string>(shipment.receiver_notes || '');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // ADMIN ONLY: Edit mode for general shipment details
   const [isEditMode, setIsEditMode] = useState(false);
+
+  // Strictly enforce that SRM / non-admin cannot enter edit mode under any circumstance
+  useEffect(() => {
+    if (!isAdmin && isEditMode) {
+      setIsEditMode(false);
+    }
+  }, [isAdmin, isEditMode]);
+
   const [editBookingNo, setEditBookingNo] = useState(shipment.booking_no || '');
   const [editPoNo, setEditPoNo] = useState(shipment.po_no || '');
   const [editAwbBl, setEditAwbBl] = useState(shipment.awb_bl || '');
@@ -63,9 +82,11 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   const [editOrigin, setEditOrigin] = useState(shipment.origin || '');
   const [editDestination, setEditDestination] = useState(shipment.destination || 'Unithai Shipyard Laem Chabang');
   const [editMode, setEditMode] = useState<any>(shipment.mode || 'AIR');
-  const [editEta, setEditEta] = useState(shipment.eta ? new Date(shipment.eta).toISOString().split('T')[0] : '');
+  const [editEta, setEditEta] = useState(
+    shipment.eta ? new Date(shipment.eta).toISOString().split('T')[0] : ''
+  );
 
-  // Quick action: Confirm Received (Available to both SRM and Admin)
+  // ACTION 1 FOR SRM & ADMIN: Mark as Received ("รับแล้ว")
   const handleQuickReceive = async () => {
     try {
       setSaving(true);
@@ -80,8 +101,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
       setSaveSuccess(true);
       setTimeout(() => {
         onUpdated();
-        onClose();
-      }, 800);
+      }, 500);
     } catch (err: any) {
       console.error('Error confirming receipt:', err);
       alert('Error confirming receipt: ' + (err.message || err));
@@ -90,12 +110,35 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     }
   };
 
+  // ACTION 2 FOR SRM & ADMIN: Change Urgency (ปกติ / ด่วน / ด่วนมาก)
+  // Immediate auto-save without requiring any general Save button for SRM
+  const handleUrgencyChange = async (newUrgency: UrgencyLevel) => {
+    setCurrentUrgency(newUrgency);
+    try {
+      setSaving(true);
+      const res = await updateShipmentUrgency(shipment.id, newUrgency, currentUser);
+      if (res.success) {
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2000);
+        window.dispatchEvent(new CustomEvent('supabase-data-changed'));
+        onUpdated();
+      } else {
+        alert('Update urgency failed: ' + res.error);
+      }
+    } catch (err: any) {
+      console.error('Error changing urgency:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // ADMIN ONLY: Delete Shipment
   const handleDeleteShipment = async () => {
     if (!isAdmin) return;
-    const confirmMsg = language === 'th'
-      ? `ยืนยันการลบ Shipment ${shipment.awb_bl}?`
-      : `Are you sure you want to delete shipment ${shipment.awb_bl}?`;
+    const confirmMsg =
+      language === 'th'
+        ? `ยืนยันการลบ Shipment ${shipment.awb_bl}?`
+        : `Are you sure you want to delete shipment ${shipment.awb_bl}?`;
     if (!window.confirm(confirmMsg)) return;
 
     try {
@@ -116,67 +159,59 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     }
   };
 
-  // Save handler: handles both SRM (Urgency + Received) and ADMIN (Full edit / Status)
-  const handleUpdateStatus = async () => {
+  // ADMIN ONLY: Save handler for full shipment edit and administrative status
+  const handleAdminSave = async () => {
+    if (!isAdmin) return;
+
     try {
       setSaving(true);
 
-      // SECURITY RULE: SRM is allowed to modify ONLY status (to RECEIVED) and urgency level (CRITICAL / URGENT / NORMAL)
-      if (!isAdmin) {
-        // SRM: update urgency level
-        const urgRes = await updateShipmentUrgency(shipment.id, currentUrgency, currentUser);
-        if (!urgRes.success) {
-          alert('Update failed: ' + urgRes.error);
+      if (isEditMode) {
+        const updates: Partial<Shipment> = {
+          booking_no: editBookingNo.trim(),
+          po_no: editPoNo.trim(),
+          awb_bl: editAwbBl.trim().toUpperCase(),
+          flight_vessel: editFlightVessel.trim(),
+          description_of_goods: editDescriptionOfGoods.trim(),
+          package_qty: editPackageQty.trim(),
+          supplier: editSupplier.trim(),
+          origin: editOrigin.trim(),
+          destination: editDestination.trim(),
+          mode: editMode,
+          urgency: currentUrgency,
+          status: currentStatus as any,
+          eta: editEta ? new Date(editEta).toISOString() : shipment.eta,
+          received_date:
+            currentStatus === 'RECEIVED'
+              ? shipment.received_date || new Date().toISOString()
+              : null,
+          receiver_notes: receiverNotes,
+        };
+
+        const res = await adminUpdateShipment(shipment.id, updates, currentUser);
+        if (!res.success) {
+          alert('Update failed: ' + res.error);
           return;
         }
-
-        // If user also marked as received in this dialog
-        if (currentStatus === 'RECEIVED' && shipment.status !== 'RECEIVED') {
-          await markShipmentReceived(shipment.id, currentUser);
-        }
       } else {
-        // ADMIN: full update capability
-        if (isEditMode) {
-          const updates: Partial<Shipment> = {
-            booking_no: editBookingNo.trim(),
-            po_no: editPoNo.trim(),
-            awb_bl: editAwbBl.trim().toUpperCase(),
-            flight_vessel: editFlightVessel.trim(),
-            description_of_goods: editDescriptionOfGoods.trim(),
-            package_qty: editPackageQty.trim(),
-            supplier: editSupplier.trim(),
-            origin: editOrigin.trim(),
-            destination: editDestination.trim(),
-            mode: editMode,
-            urgency: currentUrgency,
-            status: currentStatus as any,
-            eta: editEta ? new Date(editEta).toISOString() : shipment.eta,
-            received_date: currentStatus === 'RECEIVED' ? (shipment.received_date || new Date().toISOString()) : null,
-            receiver_notes: receiverNotes,
-          };
+        const isReceived = currentStatus === 'RECEIVED';
+        const now = new Date().toISOString();
 
-          const res = await adminUpdateShipment(shipment.id, updates, currentUser);
-          if (!res.success) {
-            alert('Update failed: ' + res.error);
-            return;
-          }
-        } else {
-          const isReceived = currentStatus === 'RECEIVED';
-          const now = new Date().toISOString();
-
-          const { error: updateErr } = await supabase.from('shipments').update({
+        const { error: updateErr } = await supabase
+          .from('shipments')
+          .update({
             status: currentStatus,
             urgency: currentUrgency,
-            received_date: isReceived ? (shipment.received_date || now) : null,
-            receiver_name: isReceived ? (shipment.receiver_name || currentUser?.full_name) : null,
+            received_date: isReceived ? shipment.received_date || now : null,
+            receiver_name: isReceived ? shipment.receiver_name || currentUser?.full_name : null,
             receiver_notes: receiverNotes,
-          }).eq('id', shipment.id);
+          })
+          .eq('id', shipment.id);
 
-          if (updateErr) {
-            console.error('Update status error:', updateErr);
-            alert('Update failed: ' + updateErr.message);
-            return;
-          }
+        if (updateErr) {
+          console.error('Update status error:', updateErr);
+          alert('Update failed: ' + updateErr.message);
+          return;
         }
       }
 
@@ -185,14 +220,16 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
       setTimeout(() => {
         onUpdated();
         onClose();
-      }, 800);
+      }, 700);
     } catch (err: any) {
-      console.error('Error updating status:', err);
-      alert('Error updating status: ' + (err.message || err));
+      console.error('Error saving shipment:', err);
+      alert('Error saving: ' + (err.message || err));
     } finally {
       setSaving(false);
     }
   };
+
+  const isReceived = currentStatus === 'RECEIVED';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs">
@@ -201,7 +238,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300 text-slate-950'
         }`}
       >
-        {/* Header (High Contrast) */}
+        {/* Header */}
         <div
           className={`sticky top-0 z-10 px-5 py-4 border-b flex items-start justify-between gap-3 ${
             isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-300'
@@ -270,10 +307,18 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             }`}
           >
             <div className="flex items-center gap-2.5">
-              {currentStatus === 'RECEIVED' && <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />}
-              {currentStatus === 'ARRIVING_TODAY' && <Clock className="w-5 h-5 text-cyan-600 dark:text-cyan-400 shrink-0 animate-pulse" />}
-              {currentStatus === 'DELAYED' && <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />}
-              {currentStatus === 'IN_TRANSIT' && <Package className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />}
+              {currentStatus === 'RECEIVED' && (
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              )}
+              {currentStatus === 'ARRIVING_TODAY' && (
+                <Clock className="w-5 h-5 text-cyan-600 dark:text-cyan-400 shrink-0 animate-pulse" />
+              )}
+              {currentStatus === 'DELAYED' && (
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
+              )}
+              {currentStatus === 'IN_TRANSIT' && (
+                <Package className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+              )}
               <div>
                 <span className="font-black uppercase font-mono tracking-wider text-xs block">
                   {language === 'th' ? 'สถานะปัจจุบัน: ' : 'Current Status: '}
@@ -282,7 +327,11 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 <span className="text-xs font-semibold opacity-95">
                   {currentStatus === 'RECEIVED'
                     ? language === 'th'
-                      ? `ตรวจรับโดย ${shipment.receiver_name || currentUser?.full_name} (${shipment.received_date ? new Date(shipment.received_date).toLocaleDateString() : 'Today'})`
+                      ? `ตรวจรับโดย ${shipment.receiver_name || currentUser?.full_name} (${
+                          shipment.received_date
+                            ? new Date(shipment.received_date).toLocaleDateString()
+                            : 'Today'
+                        })`
                       : `Received by ${shipment.receiver_name || currentUser?.full_name}`
                     : language === 'th'
                     ? `กำหนดถึง (ETA): ${new Date(shipment.eta).toLocaleDateString()}`
@@ -291,17 +340,22 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Action button for SRM to confirm received */}
-            {currentStatus !== 'RECEIVED' && (
+            {/* ACTION 1: "รับแล้ว" button for SRM and Admin */}
+            {!isReceived ? (
               <button
                 type="button"
                 disabled={saving}
                 onClick={handleQuickReceive}
-                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
               >
                 <Check className="w-4 h-4" />
-                <span>{language === 'th' ? 'ตรวจรับพัสดุเข้าอู่ (Mark as Received) ✅' : 'Confirm & Mark as Received ✅'}</span>
+                <span>รับแล้ว</span>
               </button>
+            ) : (
+              <span className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-300 font-bold text-xs flex items-center gap-1.5 border border-emerald-300 dark:border-emerald-700 shrink-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>ได้รับแล้ว (RECEIVED)</span>
+              </span>
             )}
           </div>
 
@@ -329,12 +383,20 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   }`}
                 >
                   <Edit2 className="w-3.5 h-3.5" />
-                  <span>{isEditMode ? (language === 'th' ? 'ยกเลิกโหมดแก้ไข' : 'Cancel Edit') : (language === 'th' ? 'แก้ไขข้อมูล (Admin)' : 'Edit Details (Admin)')}</span>
+                  <span>
+                    {isEditMode
+                      ? language === 'th'
+                        ? 'ยกเลิกโหมดแก้ไข'
+                        : 'Cancel Edit'
+                      : language === 'th'
+                      ? 'แก้ไขข้อมูล (Admin)'
+                      : 'Edit Details (Admin)'}
+                  </span>
                 </button>
               )}
             </div>
 
-            {/* If ADMIN is in Edit Mode: render editable inputs */}
+            {/* IF ADMIN IS IN EDIT MODE: Render editable inputs */}
             {isAdmin && isEditMode ? (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -444,63 +506,72 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 </div>
               </div>
             ) : (
-              /* SRM & Non-Edit Mode: Strictly READ-ONLY spans */
+              /* SRM & Non-Edit Mode: Strictly READ-ONLY plain text display */
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     BOOKING NO.
                   </span>
-                  <span className="font-mono font-black text-blue-950 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 rounded text-xs border border-blue-200 dark:border-blue-800 inline-block">
-                    {shipment.booking_no || 'BKG-2026-0914'}
-                  </span>
+                  <div className="font-mono font-black text-blue-950 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 rounded text-xs border border-blue-200 dark:border-blue-800 inline-block">
+                    {shipment.booking_no || '—'}
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     P/O NO. / SUPPLY
                   </span>
-                  <span className="font-mono font-black text-emerald-950 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded text-xs border border-emerald-200 dark:border-emerald-800 inline-block">
-                    {shipment.po_no || 'PO-770413'}
-                  </span>
+                  <div className="font-mono font-black text-emerald-950 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded text-xs border border-emerald-200 dark:border-emerald-800 inline-block">
+                    {shipment.po_no || '—'}
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     AWB / B/L NO.
                   </span>
-                  <span className="font-mono font-black text-slate-950 dark:text-white bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded text-xs border border-slate-300 dark:border-slate-700 inline-block">
+                  <div className="font-mono font-black text-slate-950 dark:text-white bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded text-xs border border-slate-300 dark:border-slate-700 inline-block">
                     {shipment.awb_bl}
-                  </span>
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     FLIGHT / VESSEL
                   </span>
-                  <span className="font-bold text-slate-950 dark:text-white text-xs">
-                    {shipment.flight_vessel || 'MV WAN HAI / TG-920'}
-                  </span>
+                  <div className="font-bold text-slate-950 dark:text-white text-xs">
+                    {shipment.flight_vessel || '—'}
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     PACKAGE & WEIGHT
                   </span>
-                  <span className="font-bold text-slate-950 dark:text-white text-xs">
-                    {shipment.package_qty || '2 Wooden Crates (140 kg)'}
-                  </span>
+                  <div className="font-bold text-slate-950 dark:text-white text-xs">
+                    {shipment.package_qty || '—'}
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     MODE OF TRANSPORT
                   </span>
-                  <span className="inline-flex items-center gap-1 font-mono font-black text-[11px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-950 dark:text-white">
+                  <div className="inline-flex items-center gap-1 font-mono font-black text-[11px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-950 dark:text-white">
                     {shipment.mode === 'AIR' && <Plane className="w-3.5 h-3.5 text-cyan-700 dark:text-cyan-400" />}
                     {shipment.mode === 'SEA' && <Anchor className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />}
                     {shipment.mode === 'LAND' && <Truck className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />}
                     {shipment.mode}
+                  </div>
+                </div>
+
+                <div className="col-span-2 sm:col-span-3 pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
+                    {language === 'th' ? 'รายการอะไหล่ / คำอธิบาย' : 'Description of Goods'}
                   </span>
+                  <div className="font-semibold text-slate-900 dark:text-slate-100 text-xs leading-relaxed">
+                    {shipment.description_of_goods || '—'}
+                  </div>
                 </div>
               </div>
             )}
@@ -571,153 +642,164 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 </div>
               </div>
             ) : (
-              /* SRM: Strictly READ-ONLY */
+              /* SRM & Non-Edit Mode: Strictly READ-ONLY plain text */
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     {language === 'th' ? 'ผู้ผลิต / ซัพพลายเออร์ (Supplier)' : 'Shipper / Supplier'}
                   </span>
-                  <span className="font-black text-slate-950 dark:text-white text-xs block">
+                  <div className="font-black text-slate-950 dark:text-white text-xs block">
                     {shipment.supplier}
-                  </span>
-                  <span className="text-xs text-slate-700 dark:text-slate-300 block font-mono">
-                    {shipment.origin}
-                  </span>
+                  </div>
+                  <div className="text-xs text-slate-700 dark:text-slate-300 font-mono mt-1">
+                    Origin: {shipment.origin || '—'}
+                  </div>
                 </div>
 
                 <div>
                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-0.5">
                     {language === 'th' ? 'จุดหมายปลายทางในอู่เรือ (Destination)' : 'Yard Destination'}
                   </span>
-                  <span className="font-black text-slate-950 dark:text-white text-xs block">
-                    {shipment.destination}
-                  </span>
-                  <span className="text-xs text-slate-700 dark:text-slate-300 block">
-                    Unithai Shipyard Laem Chabang Deep Sea Port
-                  </span>
+                  <div className="font-black text-slate-950 dark:text-white text-xs block">
+                    {shipment.destination || 'Unithai Shipyard Laem Chabang Deep Sea Port'}
+                  </div>
+                  <div className="text-xs text-slate-700 dark:text-slate-300 mt-1 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-cyan-600" />
+                    <span>ETA: {new Date(shipment.eta).toLocaleDateString()}</span>
+                  </div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Section 3: Status Changer & Urgency for User */}
-          <div
-            className={`p-4 rounded-xl border ${
-              isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-300 shadow-sm'
-            }`}
-          >
-            <h4 className="font-black text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-2 flex items-center gap-1.5">
-              <Save className="w-4 h-4 text-cyan-700 dark:text-cyan-400" />
-              <span>{language === 'th' ? 'ปรับปรุงสถานะและระดับความด่วน (Update Status & Urgency)' : 'Update Status & Urgency'}</span>
-            </h4>
+          {/* Section 3: Permitted Controls */}
+          {/* ADMIN: Status changer, storage notes, and urgency */}
+          {isAdmin && (
+            <div
+              className={`p-4 rounded-xl border ${
+                isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-300 shadow-xs'
+              }`}
+            >
+              <h4 className="font-black text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-2 flex items-center gap-1.5">
+                <Save className="w-4 h-4 text-cyan-700 dark:text-cyan-400" />
+                <span>{language === 'th' ? 'จัดการสถานะและระดับความด่วน (Admin Control)' : 'Manage Status & Urgency (Admin)'}</span>
+              </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-              {/* Urgency selector: Critical, Urgent, Normal (Allowed for both SRM and Admin) */}
-              <div>
-                <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
-                  {language === 'th' ? 'ระดับความด่วน (Urgency)' : 'Urgency Level'}
-                </label>
-                <select
-                  value={currentUrgency}
-                  onChange={(e: any) => setCurrentUrgency(e.target.value)}
-                  className={`w-full p-2.5 text-xs font-black rounded-xl border focus:outline-hidden ${
-                    currentUrgency === 'CRITICAL'
-                      ? 'bg-red-100 text-red-950 border-red-500 dark:bg-red-950 dark:text-red-200'
-                      : currentUrgency === 'URGENT'
-                      ? 'bg-amber-100 text-amber-950 border-amber-500 dark:bg-amber-950 dark:text-amber-200'
-                      : isDark
-                      ? 'bg-slate-800 border-slate-700 text-white'
-                      : 'bg-slate-50 border-slate-300 text-slate-950'
-                  }`}
-                >
-                  <option value="NORMAL">ปกติ</option>
-                  <option value="URGENT">ด่วน</option>
-                  <option value="CRITICAL">ด่วนมาก</option>
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                {/* Urgency selector for Admin */}
+                <div>
+                  <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
+                    {language === 'th' ? 'ระดับความด่วน (Urgency)' : 'Urgency Level'}
+                  </label>
+                  <select
+                    value={currentUrgency}
+                    onChange={(e: any) => setCurrentUrgency(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-black rounded-xl border focus:outline-hidden ${
+                      currentUrgency === 'CRITICAL'
+                        ? 'bg-red-100 text-red-950 border-red-500 dark:bg-red-950 dark:text-red-200'
+                        : currentUrgency === 'URGENT'
+                        ? 'bg-amber-100 text-amber-950 border-amber-500 dark:bg-amber-950 dark:text-amber-200'
+                        : isDark
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-slate-50 border-slate-300 text-slate-950'
+                    }`}
+                  >
+                    <option value="NORMAL">ปกติ</option>
+                    <option value="URGENT">ด่วน</option>
+                    <option value="CRITICAL">ด่วนมาก</option>
+                  </select>
+                </div>
+
+                {/* Status Selector for ADMIN */}
+                <div>
+                  <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
+                    {language === 'th' ? 'เลือกสถานะ (Status - ADMIN)' : 'Select Status (Admin)'}
+                  </label>
+                  <select
+                    value={currentStatus}
+                    onChange={(e) => setCurrentStatus(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-black rounded-xl border focus:outline-hidden ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-950'
+                    }`}
+                  >
+                    <option value="IN_TRANSIT">IN TRANSIT (กำลังเดินทาง)</option>
+                    <option value="ARRIVING_TODAY">ARRIVING TODAY (ถึงท่าเรือวันนี้ / รอเคลียร์)</option>
+                    <option value="DELAYED">DELAYED (ล่าช้ากว่ากำหนด)</option>
+                    <option value="RECEIVED">RECEIVED (ได้รับเข้าอู่เรือแล้ว ✅)</option>
+                  </select>
+                </div>
+
+                {/* Notes / Storage Location for ADMIN */}
+                <div>
+                  <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
+                    {language === 'th' ? 'บันทึกการจัดเก็บ / ผู้รับ (Notes / Location)' : 'Notes / Storage Location'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={language === 'th' ? 'เช่น ตรวจรับแล้ว เก็บเข้า Toolroom 1' : 'e.g. Stored in Toolroom No.1'}
+                    value={receiverNotes}
+                    onChange={(e) => setReceiverNotes(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-medium rounded-xl border focus:outline-hidden ${
+                      isDark
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-slate-50 border-slate-300 text-slate-950 placeholder:text-slate-500'
+                    }`}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SRM PERMITTED ACTION 2: Urgency Selector ONLY (NO general form, NO save button) */}
+          {!isAdmin && (
+            <div
+              className={`p-4 rounded-xl border ${
+                isDark ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-300 shadow-xs'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex-1">
+                  <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-amber-500" />
+                    <span>{language === 'th' ? 'ระดับความด่วน (Urgency Level)' : 'Urgency Level'}</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {language === 'th'
+                      ? 'SRM สามารถปรับเปลี่ยนระดับความด่วนได้ทันที (ปกติ / ด่วน / ด่วนมาก)'
+                      : 'SRM can modify urgency level (Normal / Urgent / Critical)'}
+                  </p>
+                </div>
+
+                <div className="w-full sm:w-60">
+                  <select
+                    value={currentUrgency}
+                    disabled={saving}
+                    onChange={(e: any) => handleUrgencyChange(e.target.value as UrgencyLevel)}
+                    className={`w-full p-2.5 text-xs font-black rounded-xl border cursor-pointer focus:outline-hidden transition-all ${
+                      currentUrgency === 'CRITICAL'
+                        ? 'bg-red-100 text-red-950 border-red-500 dark:bg-red-950 dark:text-red-200'
+                        : currentUrgency === 'URGENT'
+                        ? 'bg-amber-100 text-amber-950 border-amber-500 dark:bg-amber-950 dark:text-amber-200'
+                        : isDark
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-slate-50 border-slate-300 text-slate-950'
+                    }`}
+                  >
+                    <option value="NORMAL">ปกติ</option>
+                    <option value="URGENT">ด่วน</option>
+                    <option value="CRITICAL">ด่วนมาก</option>
+                  </select>
+                </div>
               </div>
 
-              {/* Status Section: Admin sees full dropdown; SRM sees Mark as Received or Received badge */}
-              {isAdmin ? (
-                <>
-                  {/* Status Selector for ADMIN */}
-                  <div>
-                    <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
-                      {language === 'th' ? 'เลือกสถานะ (Status - ADMIN)' : 'Select Status (Admin)'}
-                    </label>
-                    <select
-                      value={currentStatus}
-                      onChange={(e) => setCurrentStatus(e.target.value)}
-                      className={`w-full p-2.5 text-xs font-black rounded-xl border focus:outline-hidden ${
-                        isDark
-                          ? 'bg-slate-800 border-slate-700 text-white'
-                          : 'bg-slate-50 border-slate-300 text-slate-950'
-                      }`}
-                    >
-                      <option value="IN_TRANSIT">IN TRANSIT (กำลังเดินทาง)</option>
-                      <option value="ARRIVING_TODAY">ARRIVING TODAY (ถึงท่าเรือวันนี้ / รอเคลียร์)</option>
-                      <option value="DELAYED">DELAYED (ล่าช้ากว่ากำหนด)</option>
-                      <option value="RECEIVED">RECEIVED (ได้รับเข้าอู่เรือแล้ว ✅)</option>
-                    </select>
-                  </div>
-
-                  {/* Notes / Storage Location for ADMIN */}
-                  <div>
-                    <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
-                      {language === 'th' ? 'บันทึกการจัดเก็บ / ผู้รับ (Notes / Location)' : 'Notes / Storage Location'}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={language === 'th' ? 'เช่น ตรวจรับแล้ว เก็บเข้า Toolroom 1' : 'e.g. Stored in Toolroom No.1'}
-                      value={receiverNotes}
-                      onChange={(e) => setReceiverNotes(e.target.value)}
-                      className={`w-full p-2.5 text-xs font-medium rounded-xl border focus:outline-hidden ${
-                        isDark
-                          ? 'bg-slate-800 border-slate-700 text-white'
-                          : 'bg-slate-50 border-slate-300 text-slate-950 placeholder:text-slate-500'
-                      }`}
-                    />
-                  </div>
-                </>
-              ) : (
-                /* SRM Receiving Status Control */
-                <div className="sm:col-span-2">
-                  <label className="block text-slate-900 dark:text-slate-100 font-bold mb-1 text-xs">
-                    {language === 'th' ? 'การตรวจรับเข้าอู่เรือ (Receiving Status)' : 'Receiving Confirmation'}
-                  </label>
-                  {currentStatus !== 'RECEIVED' ? (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={handleQuickReceive}
-                      className="w-full p-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>{language === 'th' ? 'ตรวจรับพัสดุเข้าอู่ (Mark as Received) ✅' : 'Confirm & Mark as Received ✅'}</span>
-                    </button>
-                  ) : (
-                    <div className="w-full p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-400 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200 font-black text-xs flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        <span>RECEIVED — ตรวจรับอะไหล่เรียบร้อยแล้ว</span>
-                      </div>
-                      <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
-                        {shipment.received_date ? new Date(shipment.received_date).toLocaleDateString() : 'Confirmed'}
-                      </span>
-                    </div>
-                  )}
+              {saveSuccess && (
+                <div className="mt-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{language === 'th' ? 'อัปเดตระดับความด่วนเรียบร้อยแล้ว' : 'Urgency updated successfully'}</span>
                 </div>
               )}
             </div>
-
-            {saveSuccess && (
-              <div className="mt-3 p-2.5 rounded-lg bg-emerald-500/20 text-emerald-950 dark:text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-                <span>
-                  {language === 'th' ? 'บันทึกการเปลี่ยนแปลงสถานะเรียบร้อยแล้ว!' : 'Status successfully updated!'}
-                </span>
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -743,6 +825,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
+            {/* Close Button: Always available */}
             <button
               type="button"
               onClick={onClose}
@@ -751,19 +834,18 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               {t.close}
             </button>
 
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleUpdateStatus}
-              className="px-4 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              <span>
-                {!isAdmin
-                  ? (language === 'th' ? 'บันทึกระดับความด่วน (Save Urgency)' : 'Save Urgency Level')
-                  : (language === 'th' ? 'บันทึกการเปลี่ยนแปลง' : 'Save Changes')}
-              </span>
-            </button>
+            {/* ADMIN ONLY: Save Changes button (SRM does NOT have any Save/Update button) */}
+            {isAdmin && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleAdminSave}
+                className="px-4 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{language === 'th' ? 'บันทึกการเปลี่ยนแปลง' : 'Save Changes'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

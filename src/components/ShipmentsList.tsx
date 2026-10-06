@@ -36,13 +36,6 @@ import {
 export const ShipmentsList: React.FC = () => {
   const { isDark } = useTheme();
   const { currentUser, isAdmin, isSRM } = useAuth();
-  console.log('[RBAC DEBUG]', {
-  currentUser,
-  isAdmin,
-  isSRM,
-  role: currentUser?.role,
-  status: currentUser?.status,
-});
   const { t, language } = useLanguage();
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
@@ -92,6 +85,13 @@ export const ShipmentsList: React.FC = () => {
   const [editStatus, setEditStatus] = useState<'IN_TRANSIT' | 'ARRIVING_TODAY' | 'RECEIVED' | 'DELAYED'>('IN_TRANSIT');
   const [isEditingSubmitting, setIsEditingSubmitting] = useState(false);
   const [editModalError, setEditModalError] = useState<string | null>(null);
+
+  // Strictly ensure non-admin users (SRM) cannot retain or open edit modal
+  useEffect(() => {
+    if (!isAdmin && editingShipment) {
+      setEditingShipment(null);
+    }
+  }, [isAdmin, editingShipment]);
 
   // Admin Delete Shipment State
   const [deletingShipment, setDeletingShipment] = useState<Shipment | null>(null);
