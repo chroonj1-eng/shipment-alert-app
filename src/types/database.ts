@@ -1,7 +1,7 @@
 // Database Types for Supabase SRM Spare Part Management System
 
 export type RoleType = 'ADMIN' | 'SRM' | 'CO_SRM' | 'IN_CHARGE' | 'ENGINEER' | 'USER';
-export type UserStatus = 'ACTIVE' | 'INACTIVE';
+export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING';
 export type JobStatus = 'ACTIVE' | 'COMPLETED' | 'ON_HOLD';
 export type ShipmentStatus = 'IN_TRANSIT' | 'ARRIVING_TODAY' | 'RECEIVED' | 'DELAYED';
 export type ShipmentMode = 'AIR' | 'SEA' | 'COURIER' | 'LAND';

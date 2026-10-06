@@ -18,6 +18,7 @@ import {
   AlertCircle,
   KeyRound,
   Anchor,
+  ShieldAlert,
 } from 'lucide-react';
 import { RoleType } from '../types/database';
 import { UNITHAI_DEPARTMENTS } from '../lib/departments';
@@ -50,6 +51,7 @@ export const AuthView: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState(false);
   const [confirmationSentEmail, setConfirmationSentEmail] = useState<string | null>(null);
+  const [pendingApprovalEmail, setPendingApprovalEmail] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,8 +110,9 @@ export const AuthView: React.FC = () => {
 
       if (!res.success && res.error) {
         setFormError(res.error);
-      } else if (res.requiresConfirmation) {
-        setConfirmationSentEmail(email.trim());
+      } else {
+        if (res.requiresConfirmation) setConfirmationSentEmail(email.trim());
+        if (res.pendingApproval) setPendingApprovalEmail(email.trim());
       }
     } else if (mode === 'forgot') {
       if (!email.trim()) {
@@ -236,6 +239,27 @@ export const AuthView: React.FC = () => {
                     ? 'ระบบได้ส่งลิงก์รีเซ็ตรหัสผ่านไปยังอีเมลของคุณเรียบร้อยแล้ว กรุณาตรวจสอบกล่องจดหมาย'
                     : 'Password reset link has been dispatched to your email address. Please check your inbox.'}
                 </span>
+              </div>
+            )}
+
+            {pendingApprovalEmail && (
+              <div className="mb-5 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 text-xs text-slate-800 dark:text-slate-200">
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-bold mb-1.5">
+                  <ShieldAlert className="w-4 h-4" />
+                  <span>{language === 'th' ? 'คำขอสิทธิ์ Admin รอการอนุมัติ' : 'Admin Request Pending Approval'}</span>
+                </div>
+                <p className="leading-relaxed">
+                  {language === 'th' ? (
+                    <>
+                      บัญชี <strong>{pendingApprovalEmail}</strong> ถูกสร้างแล้ว แต่จะยังเข้าสู่ระบบไม่ได้จนกว่าผู้ดูแลระบบ (Admin) ที่มีอยู่จะกดอนุมัติในหน้า{' '}
+                      <strong>จัดการผู้ใช้</strong>
+                    </>
+                  ) : (
+                    <>
+                      The account <strong>{pendingApprovalEmail}</strong> was created, but you can only sign in after an existing Admin approves it in <strong>User Management</strong>.
+                    </>
+                  )}
+                </p>
               </div>
             )}
 
@@ -370,6 +394,13 @@ export const AuthView: React.FC = () => {
                           icon: '👤',
                           selectedStyle: isDark ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-2 ring-emerald-500/30' : 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500/30',
                         },
+                        {
+                          id: 'ADMIN' as RoleType,
+                          title: 'ADMIN',
+                          sub: language === 'th' ? 'ผู้ดูแลระบบ (ต้องรออนุมัติ)' : 'Administrator (needs approval)',
+                          icon: '🛡️',
+                          selectedStyle: isDark ? 'border-amber-500 bg-amber-500/15 text-amber-300 ring-2 ring-amber-500/30' : 'border-amber-500 bg-amber-50 text-amber-900 ring-2 ring-amber-500/30',
+                        },
                       ].map((item) => {
                         const isSelected = role === item.id;
                         return (
@@ -405,6 +436,13 @@ export const AuthView: React.FC = () => {
                         );
                       })}
                     </div>
+                    {role === 'ADMIN' && (
+                      <p className="mt-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                        {language === 'th'
+                          ? 'สิทธิ์ Admin สามารถแก้ไข/ลบข้อมูลทั้งหมดได้ บัญชีจะอยู่ในสถานะ "รออนุมัติ" และเข้าใช้งานไม่ได้จนกว่า Admin ที่มีอยู่จะอนุมัติ'
+                          : 'Admins can edit and delete all data. Your account stays "Pending" and cannot sign in until an existing Admin approves it.'}
+                      </p>
+                    )}
                   </div>
 
                   {/* Department Field */}

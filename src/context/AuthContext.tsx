@@ -29,7 +29,7 @@ interface AuthContextType {
   isAdmin: boolean;
   isSRM: boolean;
   isConfigured: boolean;
-  register: (data: RegisterData) => Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }>;
+  register: (data: RegisterData) => Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean; pendingApproval?: boolean }>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -79,7 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       employee_id: employeeId,
       role,
       department,
-      status: 'ACTIVE',
+      status: localProfile?.status || (role === 'ADMIN' ? 'PENDING' : 'ACTIVE'),
       last_login: new Date().toISOString(),
       created_at: createdAt,
       updated_at: new Date().toISOString(),
@@ -127,6 +127,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Notice: Failed reading from public.profiles, using Supabase Auth metadata / local store:', err);
       return localProfile || fallbackProfile;
     }
+  };
+
+  const blockedMessageFor = (profile: Profile): AuthMessage | null => {
+    if (profile.status === 'PENDING') {
+      return {
+        type: 'info',
+        title: 'รอการอนุมัติจากผู้ดูแลระบบ (Awaiting Admin Approval)',
+        message:
+          'บัญชี Admin ของคุณอยู่ระหว่างรออนุมัติ ผู้ดูแลระบบที่มีอยู่ต้องอนุมัติก่อนจึงจะเข้าใช้งานได้ (Your Admin account is pending approval by an existing administrator.)',
+      };
+    }
+    if (profile.status === 'INACTIVE') {
+      return {
+        type: 'error',
+        title: 'บัญชีถูกระงับ (Account Deactivated)',
+        message: 'บัญชีนี้ถูกระงับโดยผู้ดูแลระบบ (This account has been deactivated by the Admin.)',
+      };
+    }
+    return null;
+  };
+
+  // Signs the user out when their profile is not ACTIVE. Deferred so it is
+  // safe to call from inside onAuthStateChange (supabase-js deadlocks otherwise).
+  const applyProfileOrBlock = (profile: Profile): boolean => {
+    const blocked = blockedMessageFor(profile);
+    if (!blocked) {
+      setCurrentUser(profile);
+      return true;
+    }
+    setCurrentUser(null);
+    setSession(null);
+    setAuthMessage(blocked);
+    setTimeout(() => {
+      supabase.auth.signOut();
+    }, 0);
+    return false;
   };
 
   // Initialize session on mount and handle confirmation callbacks
@@ -195,7 +231,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             existingSession.user.user_metadata,
             existingSession.user.created_at
           );
-          if (mounted) setCurrentUser(profile);
+          if (mounted) applyProfileOrBlock(profile);
         }
       } catch (err: any) {
         console.error('Init session error:', err);
@@ -230,7 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           newSession.user.user_metadata,
           newSession.user.created_at
         );
-        if (mounted) setCurrentUser(profile);
+        if (mounted) applyProfileOrBlock(profile);
       } else {
         if (mounted) setCurrentUser(null);
       }
@@ -331,8 +367,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const resolvedName = (fullName || name || email.split('@')[0]).trim();
       const resolvedEmpId = employeeId ? employeeId.trim().toUpperCase() : `UT-${Math.floor(10000 + Math.random() * 90000)}`;
-      // SECURITY RULE: Users registering themselves cannot grant themselves ADMIN role
-      const resolvedRole: RoleType = role === 'ADMIN' ? 'SRM' : (role || 'SRM');
+      // ADMIN requests are created as PENDING; the database also enforces this.
+      const resolvedRole: RoleType = role || 'SRM';
+      const pendingApproval = resolvedRole === 'ADMIN';
       const redirectUrl = getAuthRedirectUrl();
 
       const { data, error: signUpError } = await supabase.auth.signUp({
@@ -374,7 +411,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         employee_id: resolvedEmpId,
         role: resolvedRole,
         department: department.trim(),
-        status: 'ACTIVE',
+        status: pendingApproval ? 'PENDING' : 'ACTIVE',
         last_login: new Date().toISOString(),
         created_at: data.user.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -391,13 +428,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const requiresConfirmation = Boolean(data.user && !data.session);
 
       if (data.session) {
-        setSession(data.session);
-        setCurrentUser(profilePayload);
+        if (pendingApproval) {
+          applyProfileOrBlock(profilePayload);
+        } else {
+          setSession(data.session);
+          setCurrentUser(profilePayload);
+        }
       }
 
       return {
         success: true,
         requiresConfirmation,
+        pendingApproval,
       };
     } catch (err: any) {
       const msg = err.message || 'Registration failed';
@@ -439,13 +481,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           data.user.created_at
         );
 
-        if (profile.status === 'INACTIVE') {
+        const blocked = blockedMessageFor(profile);
+        if (blocked) {
           await supabase.auth.signOut();
           setSession(null);
           setCurrentUser(null);
-          const inactiveMsg = 'This account has been deactivated by the Admin.';
-          setError(inactiveMsg);
-          return { success: false, error: inactiveMsg };
+          setError(blocked.message);
+          return { success: false, error: blocked.message };
         }
 
         // Record last_login in Supabase database
@@ -511,7 +553,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         error,
         authMessage,
         clearAuthMessage,
-        isAdmin: currentUser?.role === 'ADMIN',
+        isAdmin: currentUser?.role === 'ADMIN' && currentUser?.status === 'ACTIVE',
         isSRM:
           currentUser?.role === 'SRM' ||
           currentUser?.role === 'CO_SRM' ||

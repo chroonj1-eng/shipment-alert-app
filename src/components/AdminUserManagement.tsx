@@ -155,11 +155,35 @@ export const AdminUserManagement: React.FC = () => {
     return jobs.filter((j) => userJobIds.includes(j.id));
   };
 
-  const handleToggleStatus = async (userId: string, currentStatus: 'ACTIVE' | 'INACTIVE') => {
+  const handleToggleStatus = async (userId: string, currentStatus: Profile['status']) => {
     const newStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     await supabase.from('profiles').update({ status: newStatus }).eq('id', userId);
     await loadData();
   };
+
+  const handleApproveAdmin = async (user: Profile) => {
+    const ok = window.confirm(
+      language === 'th'
+        ? `อนุมัติให้ ${user.full_name || user.email} เป็น ADMIN? ผู้ใช้นี้จะแก้ไข/ลบข้อมูลทั้งหมดได้`
+        : `Approve ${user.full_name || user.email} as ADMIN? They will be able to edit and delete all data.`
+    );
+    if (!ok) return;
+    await supabase.from('profiles').update({ status: 'ACTIVE' }).eq('id', user.id);
+    await loadData();
+  };
+
+  const handleRejectAdmin = async (user: Profile) => {
+    const ok = window.confirm(
+      language === 'th'
+        ? `ปฏิเสธคำขอ Admin ของ ${user.full_name || user.email}? บัญชีจะถูกเปลี่ยนเป็น USER ทั่วไป`
+        : `Reject the Admin request from ${user.full_name || user.email}? The account becomes a regular USER.`
+    );
+    if (!ok) return;
+    await supabase.from('profiles').update({ role: 'USER', status: 'ACTIVE' }).eq('id', user.id);
+    await loadData();
+  };
+
+  const pendingAdminCount = profiles.filter((u) => u.status === 'PENDING').length;
 
   const handleOpenAssignModal = (userId: string) => {
     setAssigningUserId(userId);
@@ -214,6 +238,19 @@ export const AdminUserManagement: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {pendingAdminCount > 0 && (
+        <div
+          role="status"
+          className="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm flex items-start gap-3"
+        >
+          <span className="mt-1 w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" aria-hidden="true"></span>
+          <p className="leading-relaxed">
+            {language === 'th'
+              ? `มีคำขอสิทธิ์ Admin รออนุมัติ ${pendingAdminCount} รายการ ตรวจสอบตัวตนก่อนกด "อนุมัติ" ในตารางด้านล่าง`
+              : `${pendingAdminCount} Admin request(s) awaiting approval. Verify identity before pressing "Approve" in the table below.`}
+          </p>
+        </div>
+      )}
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -344,15 +381,21 @@ export const AdminUserManagement: React.FC = () => {
                           className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase ${
                             user.status === 'ACTIVE'
                               ? 'bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
+                              : user.status === 'PENDING'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/30'
                               : 'bg-red-100 text-red-900 border border-red-300 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20'
                           }`}
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              user.status === 'ACTIVE' ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-red-600 dark:bg-red-400'
+                              user.status === 'ACTIVE'
+                                ? 'bg-emerald-600 dark:bg-emerald-400'
+                                : user.status === 'PENDING'
+                                ? 'bg-amber-500 dark:bg-amber-400 animate-pulse'
+                                : 'bg-red-600 dark:bg-red-400'
                             }`}
                           ></span>
-                          {user.status}
+                          {user.status === 'PENDING' ? (language === 'th' ? 'รออนุมัติ' : 'PENDING') : user.status}
                         </span>
                       </td>
 
@@ -428,7 +471,28 @@ export const AdminUserManagement: React.FC = () => {
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* Toggle Status */}
+                          {user.status === 'PENDING' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleApproveAdmin(user)}
+                                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/30 text-[11px] font-semibold transition-all cursor-pointer"
+                                title={language === 'th' ? 'อนุมัติเป็น Admin' : 'Approve as Admin'}
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                {language === 'th' ? 'อนุมัติ' : 'Approve'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRejectAdmin(user)}
+                                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border bg-red-500/10 hover:bg-red-500/20 text-red-400 border-red-500/30 text-[11px] font-semibold transition-all cursor-pointer"
+                                title={language === 'th' ? 'ปฏิเสธคำขอ Admin' : 'Reject Admin request'}
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                {language === 'th' ? 'ปฏิเสธ' : 'Reject'}
+                              </button>
+                            </>
+                          ) : (
                           <button
                             type="button"
                             onClick={() => handleToggleStatus(user.id, user.status)}
@@ -445,6 +509,7 @@ export const AdminUserManagement: React.FC = () => {
                               <UserCheck className="w-3.5 h-3.5" />
                             )}
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
