@@ -36,7 +36,7 @@ export const AuthView: React.FC = () => {
     clearAuthMessage,
   } = useAuth();
 
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>('login');
 
   // Form State
   const [fullName, setFullName] = useState('');
