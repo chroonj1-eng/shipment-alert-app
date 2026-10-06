@@ -30,6 +30,7 @@ export const AuthView: React.FC = () => {
     login,
     register,
     resetPassword,
+    updatePassword,
     loading,
     error: authError,
     authMessage,
